@@ -2,7 +2,7 @@
 
 **A tiny 3D robot that lives on your Windows desktop and talks with you.**
 
-![Orbit's moods: idle, listening, speaking and napping](docs/screenshot.png)
+![Orbit flying from corner to corner across a desktop](docs/flying.gif)
 
 Orbit floats over your other windows, flies around on its own, dodges your mouse and takes naps.
 Click it, ask anything out loud, and it answers with a real voice using Google's Gemini Live API.
@@ -11,6 +11,8 @@ It speaks **English and Tamil**, and it can open apps and websites for you.
 > Free and open source (MIT). You bring your own free Gemini API key.
 
 ## Features
+
+![Orbit's moods: idle, listening, speaking and napping](docs/screenshot.png)
 
 - **Voice chat**: push-to-talk. Click the robot (or press **Ctrl+Space**), speak, click again. Orbit answers out loud,
   with live captions.
