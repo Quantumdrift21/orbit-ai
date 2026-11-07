@@ -80,6 +80,14 @@
       }
       window.setRobotState = (s) => [...btns.children].find((b) => b.textContent === s)?.click();
 
+      for (const mood of ['calm', 'happy', 'excited', 'bored', 'sleepy', 'grumpy']) {
+        const b = document.createElement('button');
+        b.textContent = `mood: ${mood}`;
+        b.onclick = () =>
+          robots.forEach((r) => r.setMotion({ vx: 0, vy: 0, sleeping: false, event: null, trick: null, mood }));
+        btns.appendChild(b);
+      }
+
       for (const skin of SKIN_NAMES) {
         const b = document.createElement('button');
         b.textContent = `skin: ${skin}`;

@@ -1,6 +1,7 @@
 // Orbit's autonomous behaviour (main process): roams the screen, dodges a fast-moving mouse,
 // lets a slow hand "catch" it, naps when nobody needs it, and follows a daily rhythm.
 const { screen } = require('electron');
+const moods = require('./mood');
 
 const now = () => performance.now() / 1000;
 // Clickable area around the robot's centre (px, half-width / half-height) – body plus arm-orbs.
@@ -18,7 +19,7 @@ function daypart(d = new Date()) {
 
 // How lively Orbit is at each time of day (seconds / px per second; trick = chance of a stunt
 // when it arrives somewhere).
-const MOOD = {
+const RHYTHM = {
   morning: { journey: 0.6, speed: 230, rest: [4, 10], sleepAfter: 240, nap: [90, 240], trick: 0.35 },
   afternoon: { journey: 0.45, speed: 190, rest: [6, 16], sleepAfter: 180, nap: [120, 360], trick: 0.25 },
   evening: { journey: 0.3, speed: 150, rest: [8, 22], sleepAfter: 150, nap: [180, 480], trick: 0.15 },
@@ -59,6 +60,8 @@ class Brain {
     this.event = null;
     this.eventUntil = 0;
     this.day = new Date().toDateString();
+    this.feelings = moods.freshScores(); // see mood.js
+    this.mood = 'calm';
     this.lastT = now();
     this.timer = setInterval(() => this.tick(), 16);
   }
@@ -70,10 +73,14 @@ class Brain {
   }
   setBusy(on) {
     this.busy = on;
-    if (on) this.interact();
+    if (on) {
+      this.feel('talk');
+      this.interact();
+    }
   }
   interact() {
     this.lastInteraction = now();
+    this.feel('attention');
     if (this.mode === 'sleep' || this.mode === 'toBed') this.wake();
   }
   onUserMove() {
@@ -95,11 +102,20 @@ class Brain {
     this.until = now() + rand(3, 6);
     this.flash('wake', 1.5);
   }
-  /** Do a flying stunt: 'spin' | 'flip' | 'roll' | 'loop'. Ignored mid-stunt or while dragged. */
-  stunt(name) {
+  /**
+   * Do a flying stunt: 'spin' | 'flip' | 'roll' | 'loop'. Ignored mid-stunt or while dragged.
+   * Only tricks the user asked for excite Orbit; its own random tricks don't, or excitement
+   * (which makes tricks more likely) would feed itself.
+   */
+  stunt(name, byUser = false) {
     if (!STUNTS.includes(name) || this.trick || this.dragging) return;
     if (this.mode === 'sleep' || this.mode === 'toBed') this.wake();
     this.trick = { name, start: now(), dur: STUNT_SECS[name], origin: { ...this.pos } };
+    if (byUser) this.feel('trick');
+  }
+  /** A mood event: 'talk' | 'attention' | 'trick' | 'morning' | 'dodge' (amount = seconds). */
+  feel(event, amount = 1) {
+    this.feelings = moods.bump(this.feelings, event, amount);
   }
   destroy() {
     clearInterval(this.timer);
@@ -123,9 +139,9 @@ class Brain {
     this.eventUntil = now() + secs;
   }
 
-  decide(mood) {
+  decide(rhythm) {
     const wa = this.workArea();
-    if (Math.random() < mood.journey) {
+    if (Math.random() < rhythm.journey) {
       // a little journey somewhere on screen
       const c = this.center();
       for (let i = 0; i < 8; i++) {
@@ -138,11 +154,11 @@ class Brain {
         }
         this.target = { x: tx, y: ty };
       }
-      this.speed = mood.speed * rand(0.75, 1.25);
+      this.speed = rhythm.speed * rand(0.75, 1.25) * moods.EFFECTS[this.mood].speed;
       this.mode = 'journey';
     } else {
       this.mode = 'rest';
-      this.until = now() + rand(...mood.rest);
+      this.until = now() + rand(...rhythm.rest);
     }
   }
 
@@ -160,12 +176,19 @@ class Brain {
     this.lastT = t;
     if (dt <= 0) return;
 
-    const mood = MOOD[daypart()];
+    const rhythm = RHYTHM[daypart()];
     const today = new Date().toDateString();
     if (today !== this.day) {
       this.day = today;
       this.flash('wake', 2);
+      this.feel('morning');
     } // new day greeting
+
+    // Mood: feelings fade over time, and the mood scales the day's rhythm (mood.js).
+    this.feelings = moods.decay(this.feelings, dt);
+    this.mood = moods.pick(this.feelings, { idleSecs: t - this.lastInteraction, night: daypart() === 'night' });
+    const fx = moods.EFFECTS[this.mood];
+    const sleepAfter = rhythm.sleepAfter * fx.nap;
 
     // cursor speed (smoothed)
     const m = screen.getCursorScreenPoint();
@@ -207,10 +230,10 @@ class Brain {
       steer = 6;
       // Roam off but nobody talking/dragging: it can't fly, so it naps (and wakes) in place.
       const parked = !this.enabled && !this.busy && !this.dragging && t >= this.pausedUntil;
-      const napDue = this.mode === 'toBed' || (this.mode !== 'sleep' && t - this.lastInteraction > mood.sleepAfter);
+      const napDue = this.mode === 'toBed' || (this.mode !== 'sleep' && t - this.lastInteraction > sleepAfter);
       if (parked && napDue) {
         this.mode = 'sleep';
-        this.until = t + rand(...mood.nap);
+        this.until = t + rand(...rhythm.nap);
       } else if (this.mode === 'journey' || this.mode === 'toBed') {
         this.mode = 'rest';
         this.until = t + 5;
@@ -220,19 +243,19 @@ class Brain {
         this.wake();
       }
     } else {
-      if (this.mode !== 'sleep' && this.mode !== 'toBed' && t - this.lastInteraction > mood.sleepAfter) this.goToBed();
+      if (this.mode !== 'sleep' && this.mode !== 'toBed' && t - this.lastInteraction > sleepAfter) this.goToBed();
 
       switch (this.mode) {
         case 'rest':
           desired = { x: Math.sin(t * 0.7) * 10, y: Math.sin(t * 1.1) * 7 };
-          if (t > this.until) this.decide(mood);
+          if (t > this.until) this.decide(rhythm);
           break;
         case 'journey':
         case 'toBed': {
           const tx = this.target.x - c.x;
           const ty = this.target.y - c.y;
           const d = Math.hypot(tx, ty) || 1;
-          const sp = (this.mode === 'toBed' ? mood.speed * 0.7 : this.speed) * Math.min(1, d / 140);
+          const sp = (this.mode === 'toBed' ? rhythm.speed * 0.7 : this.speed) * Math.min(1, d / 140);
           desired = { x: (tx / d) * sp, y: (ty / d) * sp };
           const wob = Math.sin(t * 2.3) * 35 * Math.min(1, d / 140); // organic, curvy flight
           desired.x += (-ty / d) * wob;
@@ -240,11 +263,12 @@ class Brain {
           if (d < 12) {
             if (this.mode === 'toBed') {
               this.mode = 'sleep';
-              this.until = t + rand(...mood.nap);
+              this.until = t + rand(...rhythm.nap);
             } else {
               this.mode = 'rest';
-              this.until = t + rand(...mood.rest);
-              if (Math.random() < mood.trick) this.stunt(STUNTS[Math.floor(Math.random() * STUNTS.length)]);
+              this.until = t + rand(...rhythm.rest);
+              if (Math.random() < rhythm.trick * fx.trick)
+                this.stunt(STUNTS[Math.floor(Math.random() * STUNTS.length)]);
             }
           }
           break;
@@ -266,6 +290,7 @@ class Brain {
           desired.y += (dy / dist) * 1100 * f;
           steer = 9;
           this.flash('dodge', 0.9);
+          this.feel('dodge', dt);
           if (this.mode === 'rest') this.until = Math.max(this.until, t + 2);
         } else if (dist < 100) {
           desired.x *= 0.1;
@@ -320,6 +345,7 @@ class Brain {
       sleeping: this.mode === 'sleep',
       event: this.event,
       trick,
+      mood: this.mood,
       hover: over,
       look: { x: +((m.x - nc.x) / 500).toFixed(3), y: +((m.y - nc.y) / 500).toFixed(3) },
     });

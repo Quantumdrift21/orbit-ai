@@ -39,6 +39,7 @@
       "main.js",
       "actions.js",
       "brain.js",
+      "mood.js",
       "preload.js",
       "renderer/**/*"
     ],

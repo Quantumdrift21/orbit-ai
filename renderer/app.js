@@ -27,6 +27,18 @@ const UNCLEAR_RULE =
 
 const TRICKS = { spin: 'spin around', flip: 'backflip', roll: 'barrel roll', loop: 'loop-the-loop' };
 
+// Orbit's mood (sent by the brain) colours its tone for the conversation it starts in.
+let mood = 'calm';
+const MOOD_LINES = {
+  happy: 'MOOD: You are in a happy, cheerful mood right now; let it show warmly.',
+  excited: 'MOOD: You are excited and full of energy right now; be lively, but still brief.',
+  bored: 'MOOD: You were a bit bored before the user spoke; be glad of the company and playful about it.',
+  sleepy: 'MOOD: You are a little sleepy right now; be gentle and calm, maybe a tiny yawn.',
+  grumpy:
+    'MOOD: You are mildly grumpy because the user kept swiping the mouse at you. Be playfully cheeky about it in ' +
+    'one short line, never rude, and still help fully.',
+};
+
 const TOOLS = [
   {
     functionDeclarations: [
@@ -103,7 +115,9 @@ const ACTION_RULE =
 const sessionConfig = () => ({
   ...cfg,
   tools: TOOLS,
-  systemPrompt: `${cfg.systemPrompt}\n\n${languageRule(cfg.language, cfg.language2)}\n${UNCLEAR_RULE}\n\n${ACTION_RULE}`,
+  systemPrompt:
+    `${cfg.systemPrompt}\n\n${languageRule(cfg.language, cfg.language2)}\n${UNCLEAR_RULE}\n\n${ACTION_RULE}` +
+    (MOOD_LINES[mood] ? `\n\n${MOOD_LINES[mood]}` : ''),
 });
 
 const prettyKey = (k) => (k || '').replace(/Control|CommandOrControl/g, 'Ctrl');
@@ -313,6 +327,7 @@ canvas.addEventListener('pointerup', () => {
 
 // The roaming brain (main process) reports flight, sleep, mouse position and hover.
 window.orbit.onMotion((m) => {
+  mood = m.mood || 'calm';
   orb.setMotion(m);
   orb.setLook(m.look.x, m.look.y);
   canvas.classList.toggle('hot', m.hover);

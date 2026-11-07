@@ -27,9 +27,26 @@ It speaks **99 languages** (including English and Tamil), opens any app on your 
   the morning, never at night), when you ask ("do a backflip!"), or from right-click → Do a trick.
 - **Opens your apps by voice**: Orbit finds the apps in your Start menu automatically, so "open Blender" or "open
   Spotify" just works. It also opens websites: "open YouTube", "search for biryani recipes".
+- **Moods**: Orbit feels happy, excited, calm, bored, sleepy or grumpy, depending on how you treat it (see below).
 - **Five skins**: Metallic, Leather, Matte, Velvet and a holographic Crazy skin (see below).
 - **Your choice of voice and devices**: 30 Gemini voices, pick your microphone and speaker in Settings.
 - **Private by design**: your API key is stored encrypted on your PC, and chat logs never leave it.
+
+### Moods
+
+![Orbit's six moods: calm, happy, excited, bored, sleepy and grumpy](docs/moods.png)
+
+| Mood    | What causes it                          | What changes                                  |
+| ------- | --------------------------------------- | --------------------------------------------- |
+| Calm    | The default                             | Normal look                                   |
+| Happy   | Talking to it, clicking it              | Bigger smile, warm glow, bouncier, warm tone  |
+| Excited | Tricks you ask for, a new morning       | Sparkly eyes, flies faster, more stunts       |
+| Bored   | Nobody paying attention for 10 minutes  | Droopy eyes, slow drifting, playful when back |
+| Sleepy  | Night time                              | Half-closed eyes, slow, naps sooner           |
+| Grumpy  | Swiping the mouse at it again and again | Frown, cheeky (never rude) one-liner          |
+
+Feelings fade on their own, so Orbit drifts back to calm. Right-click shows its current mood. The mood also sets
+Gemini's tone at the start of each conversation.
 
 ### Skins
 
@@ -143,6 +160,7 @@ Right-click the robot → **Settings…**
 | ------------------------------------- | -------------------------------------------------------------------- |
 | `main.js`                             | Windows, hotkey, menu, settings storage (encrypted key)              |
 | `brain.js`                            | Roaming, mouse dodging, naps, daily routine, click-through           |
+| `mood.js`                             | Orbit's moods: what raises each feeling, how fast it fades           |
 | `actions.js`                          | The apps and websites Gemini may open, with safety checks            |
 | `preload.js`                          | The small, safe bridge between the window and the main process       |
 | `renderer/app.js`                     | Listen → think → speak state machine                                 |

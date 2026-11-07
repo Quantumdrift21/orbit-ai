@@ -12,6 +12,12 @@ const STATE_COLORS = {
   error: '#ff4d5e',
 };
 
+// Moods (from the brain, see mood.js): resting face, idle glow tint and how fast it bobs.
+// Calm uses the normal idle face, colour and speed.
+const MOOD_FACES = { happy: 'smile', excited: 'excited', bored: 'bored', sleepy: 'drowsy', grumpy: 'grumpy' };
+const MOOD_TINT = { happy: '#ffd66b', excited: '#ff5cf0', bored: '#7f9bb3', sleepy: '#6c7cff', grumpy: '#ff7a4d' };
+const MOOD_BOB = { happy: 1.4, excited: 2, bored: 0.6, sleepy: 0.5, grumpy: 1.6 };
+
 const TAU = Math.PI * 2;
 const lerp = (a, b, t) => a + (b - a) * t;
 const clamp = (v, a, b) => Math.max(a, Math.min(b, v));
@@ -598,7 +604,7 @@ export class Robot {
     if (this.motion.event === 'dodge') return 'surprised';
     if (this.t < this.happyUntil) return 'happy';
     if (this.motion.sleeping) return 'sleepy';
-    return 'idle';
+    return MOOD_FACES[this.motion.mood] || 'idle';
   }
 
   #drawFace(open) {
@@ -664,10 +670,13 @@ export class Robot {
         g.arc(ex, ey, 11, 0, TAU);
         g.fill();
       } else {
-        const big = mode === 'listening' ? 1.15 : 1;
+        // Open eyes. Moods change their size and how far the lids are down.
+        const big = mode === 'listening' ? 1.15 : mode === 'excited' ? 1.2 : 1;
+        const lid = mode === 'bored' ? 0.4 : mode === 'drowsy' ? 0.3 : mode === 'grumpy' ? 0.6 : 1;
         const w = 58 * big;
-        const h = Math.max(7, 80 * big * open);
-        g.roundRect(ex - w / 2, ey - h / 2, w, h, Math.min(w, h) / 2);
+        const h = Math.max(7, 80 * big * open * lid);
+        const y = ey + (1 - lid) * 18; // lowered lids sit lower
+        g.roundRect(ex - w / 2, y - h / 2, w, h, Math.min(w, h) / 2);
         g.fill();
         if (h > 30) {
           // catch-light
@@ -676,9 +685,31 @@ export class Robot {
           g.globalAlpha = 0.55;
           g.fillStyle = '#fff';
           g.beginPath();
-          g.ellipse(ex - w * 0.18, ey - h * 0.22, 7, 10, -0.4, 0, TAU);
+          g.ellipse(ex - w * 0.18, y - h * 0.22, 7, 10, -0.4, 0, TAU);
           g.fill();
           g.restore();
+        }
+        if (mode === 'grumpy') {
+          // brow slanting down toward the nose
+          const s = i ? -1 : 1;
+          g.beginPath();
+          g.lineWidth = 10;
+          g.moveTo(ex - 32 * s, ey - 30);
+          g.lineTo(ex + 28 * s, ey - 12);
+          g.stroke();
+        } else if (mode === 'excited') {
+          // twinkling four-point sparkle by each eye
+          const r = 9 + 4 * Math.sin(t * 6 + i * 2);
+          const sx = ex + w * 0.5;
+          const sy = y - h * 0.5;
+          g.beginPath();
+          for (let k = 0; k < 8; k++) {
+            const a = (k / 8) * TAU;
+            const rr = k % 2 ? r * 0.3 : r;
+            g.lineTo(sx + Math.cos(a) * rr, sy + Math.sin(a) * rr);
+          }
+          g.closePath();
+          g.fill();
         }
       }
     }
@@ -721,8 +752,26 @@ export class Robot {
       g.globalAlpha = 1 - ((t * 0.5) % 1);
       g.fillText('z', W * 0.78, H * 0.3 - ((t * 0.5) % 1) * 40);
       g.globalAlpha = 1;
+    } else if (mode === 'excited') {
+      // open grin
+      g.arc(mx, my - 14, 32, Math.PI * 0.08, Math.PI * 0.92);
+      g.closePath();
+      g.fill();
+    } else if (mode === 'bored') {
+      g.lineWidth = 9;
+      g.moveTo(mx - 24, my);
+      g.lineTo(mx + 24, my);
+      g.stroke();
+    } else if (mode === 'grumpy') {
+      g.lineWidth = 9;
+      g.arc(mx, my + 24, 26, Math.PI * 1.22, Math.PI * 1.78);
+      g.stroke();
+    } else if (mode === 'drowsy') {
+      g.lineWidth = 7;
+      g.arc(mx, my, 8, 0, TAU);
+      g.stroke();
     } else {
-      const happy = mode === 'happy';
+      const happy = mode === 'happy' || mode === 'smile';
       g.lineWidth = happy ? 12 : 9;
       g.arc(mx, my - (happy ? 26 : 20), happy ? 38 : 28, Math.PI * 0.22, Math.PI * 0.78);
       g.stroke();
@@ -752,7 +801,8 @@ export class Robot {
   };
 
   #step(now) {
-    const dt = Math.min(0.05, (now - this.last) / 1000);
+    // Never negative: a frame's timestamp can be earlier than the moment the robot was built.
+    const dt = clamp((now - this.last) / 1000, 0, 0.05);
     this.last = now;
     this.t += dt;
     const t = this.t;
@@ -775,6 +825,8 @@ export class Robot {
     if (crazy) this.shell.map.offset.x = (t * 0.015) % 1;
     const glow = new THREE.Color(STATE_COLORS[st]);
     if (crazy && st === 'idle') glow.setHSL((t * 0.06) % 1, 0.95, 0.62);
+    else if (st === 'idle' && MOOD_TINT[this.motion.mood])
+      glow.lerp(new THREE.Color(MOOD_TINT[this.motion.mood]), 0.45);
     this.accent.lerp(glow, 0.07);
     const pulse = st === 'idle' ? 0.85 + 0.15 * Math.sin(t * 1.4) : 1 + lvl * 0.8;
     for (const m of this.glowMats) {
@@ -833,7 +885,9 @@ export class Robot {
       (st === 'thinking' ? 0.14 : 0) + Math.sin(t * 0.5) * 0.04 + bank,
       0.08,
     );
-    this.root.position.y = Math.sin(t * 1.15) * 0.06 + breath * 0.03 + (sleepy ? -0.05 : 0);
+    // bob: a running phase, so a mood change alters the speed without a jump
+    this.bobPhase = (this.bobPhase || 0) + dt * 1.15 * (MOOD_BOB[mv.mood] || 1);
+    this.root.position.y = Math.sin(this.bobPhase) * 0.06 + breath * 0.03 + (sleepy ? -0.05 : 0);
 
     // stunts: the whole body turns around its centre, with a little hop
     const tr = mv.trick;

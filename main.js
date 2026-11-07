@@ -3,6 +3,7 @@ const path = require('path');
 const fs = require('fs');
 const actions = require('./actions');
 const { Brain, STUNTS } = require('./brain');
+const { MOOD_LABELS } = require('./mood');
 
 const STUNT_LABELS = { spin: 'Spin', flip: 'Backflip', roll: 'Barrel roll', loop: 'Loop-the-loop' };
 // Must match SKIN_NAMES in renderer/robot.js.
@@ -199,7 +200,7 @@ function scanApps() {
 ipcMain.handle('apps:info', () => ({ count: actions.installedCount(), scanning: !!appScan }));
 ipcMain.handle('apps:rescan', async () => ({ count: await (appScan || scanApps()) }));
 
-ipcMain.on('orb:stunt', (_e, name) => brain?.stunt(name));
+ipcMain.on('orb:stunt', (_e, name) => brain?.stunt(name, true));
 
 // Skin changes (menu or voice) are saved and sent straight to the robot, without the
 // config:changed reload, so a conversation in progress isn't cut off.
@@ -227,6 +228,8 @@ ipcMain.on('settings:close', () => settingsWin?.close());
 
 ipcMain.on('menu:show', () => {
   Menu.buildFromTemplate([
+    { label: `Mood: ${MOOD_LABELS[brain?.mood] || MOOD_LABELS.calm}`, enabled: false },
+    { type: 'separator' },
     { label: 'Settings…', click: openSettings },
     {
       label: 'Open chat logs',
@@ -250,7 +253,7 @@ ipcMain.on('menu:show', () => {
       : { label: 'Take a nap', click: () => brain?.sleepNow() },
     {
       label: 'Do a trick',
-      submenu: STUNTS.map((s) => ({ label: STUNT_LABELS[s], click: () => brain?.stunt(s) })),
+      submenu: STUNTS.map((s) => ({ label: STUNT_LABELS[s], click: () => brain?.stunt(s, true) })),
     },
     {
       label: 'Skin',
