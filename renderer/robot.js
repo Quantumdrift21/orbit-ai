@@ -110,6 +110,177 @@ const lightBlend = {
   blendDstAlpha: THREE.OneFactor,
 };
 
+// ---------- skins ----------
+// Leather: pebbled grain plus stitches beside the panel seams (bump: white = raised).
+const leatherBump = () =>
+  canvasTexture(2048, 1024, (g, w, h) => {
+    g.fillStyle = '#c8c8c8';
+    g.fillRect(0, 0, w, h);
+    for (let i = 0; i < 26000; i++) {
+      const v = Math.random() < 0.55 ? 235 : 120;
+      g.fillStyle = `rgba(${v},${v},${v},${rand(0.25, 0.6)})`;
+      g.beginPath();
+      g.ellipse(rand(0, w), rand(0, h), rand(3, 9), rand(2, 7), rand(0, 3), 0, TAU);
+      g.fill();
+    }
+    for (const v of [0.2, 0.79]) {
+      g.fillStyle = '#555';
+      g.fillRect(0, v * h - 3, w, 6);
+      g.fillStyle = '#fff';
+      for (let u = 0; u < w; u += 22) {
+        g.fillRect(u, v * h - 16, 12, 4);
+        g.fillRect(u, v * h + 12, 12, 4);
+      }
+    }
+  });
+
+// Saddle-brown leather colour with cream thread on the stitches.
+const leatherColor = () =>
+  canvasTexture(
+    2048,
+    1024,
+    (g, w, h) => {
+      g.fillStyle = '#6a361b';
+      g.fillRect(0, 0, w, h);
+      for (let i = 0; i < 9000; i++) {
+        g.fillStyle = `rgba(${Math.random() < 0.5 ? '40,18,6' : '140,82,45'},${rand(0.08, 0.2)})`;
+        g.beginPath();
+        g.ellipse(rand(0, w), rand(0, h), rand(4, 14), rand(3, 10), rand(0, 3), 0, TAU);
+        g.fill();
+      }
+      g.fillStyle = '#ecd7a8';
+      for (const v of [0.2, 0.79]) {
+        for (let u = 0; u < w; u += 22) {
+          g.fillRect(u, v * h - 16, 12, 4);
+          g.fillRect(u, v * h + 12, 12, 4);
+        }
+      }
+    },
+    true,
+  );
+
+// Holographic rainbow, repeated round the body so the front shows every colour.
+const rainbow = () => {
+  const t = canvasTexture(
+    1024,
+    256,
+    (g, w, h) => {
+      const gr = g.createLinearGradient(0, 0, w, 0);
+      const stops = ['#ff3df2', '#7b5cff', '#2ee6ff', '#3dffa8', '#fff23d', '#ff8a3d', '#ff3df2'];
+      stops.forEach((c, i) => gr.addColorStop(i / (stops.length - 1), c));
+      g.fillStyle = gr;
+      g.fillRect(0, 0, w, h);
+      const v = g.createLinearGradient(0, 0, 0, h);
+      v.addColorStop(0, 'rgba(255,255,255,0.35)');
+      v.addColorStop(0.5, 'rgba(255,255,255,0)');
+      v.addColorStop(1, 'rgba(0,0,0,0.25)');
+      g.fillStyle = v;
+      g.fillRect(0, 0, w, h);
+    },
+    true,
+  );
+  t.wrapS = THREE.RepeatWrapping;
+  t.repeat.set(4, 1);
+  return t;
+};
+
+// Made on first use, so unused skins cost nothing at startup.
+const SKIN_TEXTURES = { brushed: brushedRoughness, detail: panelDetail, leatherBump, leatherColor, rainbow };
+
+// Every skin is a few settings on the two shared materials: the shell (body, dials, arm-orbs)
+// and the trim (bezel, antennas, rods). Strings name a texture above; anything unset uses BASE.
+const BASE_SHELL = {
+  color: 0xd2d6dd,
+  map: null,
+  metalness: 1,
+  roughness: 0.42,
+  roughnessMap: 'brushed',
+  bumpMap: 'detail',
+  bumpScale: 1.2,
+  clearcoat: 0.35,
+  clearcoatRoughness: 0.25,
+  sheen: 0,
+  iridescence: 0,
+  envMapIntensity: 1,
+};
+const BASE_TRIM = {
+  color: 0x2b2e34,
+  metalness: 0.85,
+  roughness: 0.32,
+  clearcoat: 0.4,
+  clearcoatRoughness: 0.3,
+  iridescence: 0,
+};
+const SKINS = {
+  metallic: { shell: {}, trim: {} },
+  leather: {
+    shell: {
+      color: 0xffffff,
+      map: 'leatherColor',
+      metalness: 0,
+      roughness: 0.5,
+      roughnessMap: null,
+      bumpMap: 'leatherBump',
+      bumpScale: 2.2,
+      clearcoat: 0.35,
+      clearcoatRoughness: 0.4,
+    },
+    trim: { color: 0xc49a55, metalness: 1, roughness: 0.35 },
+  },
+  matte: {
+    shell: {
+      color: 0xefebe4,
+      metalness: 0,
+      roughness: 0.92,
+      roughnessMap: null,
+      bumpScale: 0.6,
+      clearcoat: 0,
+      envMapIntensity: 1.3,
+    },
+    trim: { color: 0x34373c, metalness: 0, roughness: 0.9, clearcoat: 0 },
+  },
+  velvet: {
+    shell: {
+      color: 0x2c0848,
+      metalness: 0,
+      roughness: 1,
+      roughnessMap: null,
+      bumpScale: 0.4,
+      clearcoat: 0,
+      sheen: 1,
+      sheenColor: 0xff8fe3,
+      sheenRoughness: 0.5,
+      envMapIntensity: 0.7,
+    },
+    trim: { color: 0xd9aa4a, metalness: 1, roughness: 0.28 },
+  },
+  crazy: {
+    shell: {
+      color: 0xffffff,
+      map: 'rainbow',
+      metalness: 0.6,
+      roughness: 0.18,
+      roughnessMap: null,
+      iridescence: 1,
+      iridescenceIOR: 1.9,
+      iridescenceThicknessRange: [150, 900],
+      clearcoat: 1,
+      clearcoatRoughness: 0.05,
+    },
+    trim: { color: 0xf4f6fa, metalness: 1, roughness: 0.05, iridescence: 1, iridescenceIOR: 2.2 },
+  },
+};
+export const SKIN_NAMES = Object.keys(SKINS);
+
+function applyLook(m, look, cache) {
+  for (const [k, v] of Object.entries(look)) {
+    if (k === 'color' || k === 'sheenColor') m[k].set(v);
+    else if (typeof v === 'string') m[k] = cache[v] ||= SKIN_TEXTURES[v]();
+    else m[k] = v;
+  }
+  m.needsUpdate = true; // maps / sheen / iridescence change the shader
+}
+
 // Soft studio environment for reflections (no external HDR file needed).
 function studioEnvironment(renderer) {
   const pm = new THREE.PMREMGenerator(renderer);
@@ -194,11 +365,23 @@ export class Robot {
     if (this.state === 'idle') this.happyUntil = this.t + 1.2;
   }
 
-  /** Flight info from the roaming brain: velocity (px/s), sleeping, events ('dodge' | 'wake'). */
+  /**
+   * Flight info from the roaming brain: velocity (px/s), sleeping, events ('dodge' | 'wake'),
+   * and trick: { name: 'spin' | 'flip' | 'roll' | 'loop', p: 0..1 } while a stunt is running.
+   */
   setMotion(m) {
     if (m.event === 'wake' && this.motion.event !== 'wake') this.happyUntil = this.t + 1.6;
     if (m.event === 'dodge' && this.motion.event !== 'dodge') this.squash.v -= 1.5;
     this.motion = m;
+  }
+
+  /** Change the robot's look: 'metallic' | 'leather' | 'matte' | 'velvet' | 'crazy' (unknown → metallic). */
+  setSkin(name) {
+    const skin = SKINS[name] ? name : 'metallic';
+    if (skin === this.skin) return;
+    this.skin = skin;
+    applyLook(this.shell, { ...BASE_SHELL, ...SKINS[skin].shell }, this.skinTextures);
+    applyLook(this.trim, { ...BASE_TRIM, ...SKINS[skin].trim }, this.skinTextures);
   }
 
   /** Window was dragged by (dx, dy) px – let the arms swing. */
@@ -241,26 +424,14 @@ export class Robot {
 
   #buildRobot() {
     const glowTex = glowSprite();
-    const detail = panelDetail();
-    const silver = new THREE.MeshPhysicalMaterial({
-      color: 0xd2d6dd,
-      metalness: 1,
-      roughness: 0.42,
-      roughnessMap: brushedRoughness(),
-      bumpMap: detail,
-      bumpScale: 1.2,
-      aoMap: detail,
+    // Shell and trim are shared by every part, so a skin only restyles these two (see setSkin).
+    this.skinTextures = { detail: panelDetail() };
+    const silver = (this.shell = new THREE.MeshPhysicalMaterial({
+      aoMap: this.skinTextures.detail,
       aoMapIntensity: 0.9,
-      clearcoat: 0.35,
-      clearcoatRoughness: 0.25,
-    });
-    const graphite = new THREE.MeshPhysicalMaterial({
-      color: 0x2b2e34,
-      metalness: 0.85,
-      roughness: 0.32,
-      clearcoat: 0.4,
-      clearcoatRoughness: 0.3,
-    });
+    }));
+    const graphite = (this.trim = new THREE.MeshPhysicalMaterial());
+    this.setSkin('metallic');
     this.glowMats = []; // everything tinted with the accent colour
     const glowMat = (intensity) => {
       const m = new THREE.MeshStandardMaterial({
@@ -423,6 +594,7 @@ export class Robot {
     if (this.state === 'thinking') return 'thinking';
     if (this.state === 'listening') return 'listening';
     if (this.state === 'speaking') return 'speaking';
+    if (this.motion.trick) return 'happy';
     if (this.motion.event === 'dodge') return 'surprised';
     if (this.t < this.happyUntil) return 'happy';
     if (this.motion.sleeping) return 'sleepy';
@@ -568,7 +740,7 @@ export class Robot {
     const fps =
       m.sleeping && this.state === 'idle'
         ? 12
-        : this.state !== 'idle' || Math.abs(m.vx) + Math.abs(m.vy) > 40
+        : this.state !== 'idle' || m.trick || Math.abs(m.vx) + Math.abs(m.vy) > 40
           ? 60
           : 30;
     this.nextFrame = now + 1000 / fps - 4;
@@ -598,7 +770,12 @@ export class Robot {
     const sleepy = this.#faceMode() === 'sleepy';
 
     // accent colour → all glowing parts
-    this.accent.lerp(new THREE.Color(STATE_COLORS[st]), 0.07);
+    // Crazy skin: the rainbow slides round the body and the idle glow cycles through colours.
+    const crazy = this.skin === 'crazy';
+    if (crazy) this.shell.map.offset.x = (t * 0.015) % 1;
+    const glow = new THREE.Color(STATE_COLORS[st]);
+    if (crazy && st === 'idle') glow.setHSL((t * 0.06) % 1, 0.95, 0.62);
+    this.accent.lerp(glow, 0.07);
     const pulse = st === 'idle' ? 0.85 + 0.15 * Math.sin(t * 1.4) : 1 + lvl * 0.8;
     for (const m of this.glowMats) {
       m.emissive.copy(this.accent);
@@ -658,6 +835,21 @@ export class Robot {
     );
     this.root.position.y = Math.sin(t * 1.15) * 0.06 + breath * 0.03 + (sleepy ? -0.05 : 0);
 
+    // stunts: the whole body turns around its centre, with a little hop
+    const tr = mv.trick;
+    if (tr) {
+      const e = tr.p < 0.5 ? 4 * tr.p ** 3 : 1 - (-2 * tr.p + 2) ** 3 / 2;
+      const hop = Math.sin(Math.PI * tr.p);
+      this.root.rotation.set(
+        tr.name === 'flip' || tr.name === 'loop' ? -e * TAU : 0,
+        tr.name === 'spin' ? e * TAU : 0,
+        tr.name === 'roll' ? -e * TAU : 0,
+      );
+      this.root.position.y += hop * (tr.name === 'loop' ? 0 : 0.28);
+    } else {
+      this.root.rotation.set(0, 0, 0);
+    }
+
     // arms: spring sway + gentle float
     const a = this.arm;
     a.v += (-28 * a.x - 3.2 * a.v) * dt;
@@ -689,7 +881,7 @@ export class Robot {
         b.material.userData.base * (0.45 + 0.75 * Math.max(0, Math.sin(t * 3 - i * 0.55))) * pulse;
     });
     this.thruster.material.opacity =
-      (0.3 + breath * 0.15 + lvl * 0.25) * (sleepy ? 0.5 : 1) * (1 + Math.min(1.5, speed / 200));
+      (0.3 + breath * 0.15 + lvl * 0.25) * (sleepy ? 0.5 : 1) * (1 + Math.min(1.5, speed / 200) + (tr ? 1.2 : 0));
     this.halo.material.opacity = (0.09 + breath * 0.05 + lvl * 0.1) * (sleepy ? 0.5 : 1);
 
     // blinking (with occasional double-blink)

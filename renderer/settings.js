@@ -1,5 +1,49 @@
-const fields = ['apiKey', 'model', 'voice', 'language', 'micLabel', 'speakerLabel', 'hotkey', 'systemPrompt'];
+import { LANGUAGES } from './languages.js';
+
+const fields = [
+  'apiKey',
+  'model',
+  'voice',
+  'skin',
+  'language',
+  'language2',
+  'detectApps',
+  'micLabel',
+  'speakerLabel',
+  'hotkey',
+  'systemPrompt',
+];
 const $ = (id) => document.getElementById(id);
+const read = (el) => (el.type === 'checkbox' ? el.checked : el.value.trim());
+const write = (el, v) => (el.type === 'checkbox' ? (el.checked = v !== false) : (el.value = v ?? ''));
+
+// ---------- languages: English name plus the language's own name, e.g. "Tamil — தமிழ்" ----------
+for (const [code, name] of LANGUAGES) {
+  let native = '';
+  try {
+    native = new Intl.DisplayNames([code], { type: 'language' }).of(code);
+  } catch {
+    /* no local name known */
+  }
+  const label = native && native.toLowerCase() !== name.toLowerCase() ? `${name} — ${native}` : name;
+  $('language').add(new Option(label, code));
+  $('language2').add(new Option(label, code));
+}
+$('languageHint').textContent =
+  `${LANGUAGES.length} languages. Orbit replies only in the languages you pick here, so if it mishears you ` +
+  'as a similar-sounding language it still answers in yours. Auto works for anyone but can be fooled that way.';
+
+// ---------- installed apps ----------
+async function showAppsInfo(promise = window.orbit.appsInfo()) {
+  const info = await promise;
+  $('appsInfo').textContent = info.scanning ? 'Scanning…' : `${info.count} apps found.`;
+}
+$('rescan').addEventListener('click', (e) => {
+  e.preventDefault();
+  $('appsInfo').textContent = 'Scanning…';
+  showAppsInfo(window.orbit.rescanApps());
+});
+showAppsInfo();
 
 // ---------- audio devices ----------
 // Devices are saved by name (label) so the choice survives reboots / re-plugging.
@@ -104,7 +148,7 @@ async function testSpeaker(devices) {
 
 (async () => {
   const cfg = await window.orbit.getConfig();
-  for (const f of fields) if ($(f).tagName !== 'SELECT' || !f.endsWith('Label')) $(f).value = cfg[f] ?? '';
+  for (const f of fields) if ($(f).tagName !== 'SELECT' || !f.endsWith('Label')) write($(f), cfg[f]);
   const devices = await loadDevices(cfg);
   startMeter(devices);
   $('micLabel').addEventListener('change', () => startMeter(devices));
@@ -123,7 +167,7 @@ window.addEventListener('beforeunload', () => meter?.stop());
 
 $('save').addEventListener('click', async () => {
   const cfg = {};
-  for (const f of fields) cfg[f] = $(f).value.trim();
+  for (const f of fields) cfg[f] = read($(f));
   const msg = $('msg');
   if (!cfg.apiKey) {
     msg.className = 'warn';

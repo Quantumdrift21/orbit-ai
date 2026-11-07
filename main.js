@@ -2,7 +2,17 @@ const { app, BrowserWindow, ipcMain, globalShortcut, Menu, safeStorage, screen, 
 const path = require('path');
 const fs = require('fs');
 const actions = require('./actions');
-const { Brain } = require('./brain');
+const { Brain, STUNTS } = require('./brain');
+
+const STUNT_LABELS = { spin: 'Spin', flip: 'Backflip', roll: 'Barrel roll', loop: 'Loop-the-loop' };
+// Must match SKIN_NAMES in renderer/robot.js.
+const SKIN_LABELS = {
+  metallic: 'Metallic',
+  leather: 'Leather',
+  matte: 'Matte',
+  velvet: 'Velvet',
+  crazy: 'Crazy (holographic)',
+};
 
 // Let the orb play Gemini's audio without needing a click first.
 app.commandLine.appendSwitch('autoplay-policy', 'no-user-gesture-required');
@@ -20,11 +30,14 @@ const DEFAULTS = {
   apiKey: '',
   model: 'gemini-3.8-live',
   voice: 'Puck',
-  language: 'auto',
+  language: 'auto', // main language: 'auto' or a code from renderer/languages.js
+  language2: '', // optional second language the user also speaks
   micLabel: '', // '' = Windows default
   speakerLabel: '', // '' = Windows default
   hotkey: 'Control+Space',
   roam: true, // fly around the screen on its own
+  detectApps: true, // let voice open any app from the Start menu (list stays on this PC)
+  skin: 'metallic',
   systemPrompt:
     "You are Orbit, a friendly, upbeat voice assistant living on the user's Windows desktop. " +
     'Keep answers short and conversational (1-3 sentences) unless the user asks for detail.',
@@ -53,6 +66,7 @@ function loadConfig() {
   } catch {
     apiKey = '';
   }
+  if (raw.language === 'en+ta') Object.assign(raw, { language: 'ta', language2: raw.language2 || 'en' }); // older setting
   const { apiKeyEnc, ...rest } = raw;
   return { ...DEFAULTS, ...rest, apiKey: apiKey || process.env.GEMINI_API_KEY || '' };
 }
@@ -147,7 +161,10 @@ function openSettings() {
 ipcMain.handle('config:get', () => loadConfig());
 
 ipcMain.handle('config:set', (_e, cfg) => {
+  const wasDetecting = loadConfig().detectApps !== false;
   saveConfig(cfg);
+  if (cfg.detectApps === false) actions.setInstalledApps([]);
+  else if (!wasDetecting) scanApps();
   const hotkeyOk = registerHotkey(cfg.hotkey || DEFAULTS.hotkey);
   orbWin?.webContents.send('config:changed');
   return { ok: true, hotkeyOk };
@@ -172,7 +189,26 @@ ipcMain.handle('action:run', (_e, name, args) => {
   appendLog('action', `${name} ${JSON.stringify(args)} → ${JSON.stringify(result)}`);
   return result;
 });
-ipcMain.handle('actions:apps', () => actions.APP_NAMES);
+
+// Installed-app detection runs in the background (Get-StartApps takes a few seconds).
+let appScan = null;
+function scanApps() {
+  appScan = actions.scanStartApps().finally(() => (appScan = null));
+  return appScan;
+}
+ipcMain.handle('apps:info', () => ({ count: actions.installedCount(), scanning: !!appScan }));
+ipcMain.handle('apps:rescan', async () => ({ count: await (appScan || scanApps()) }));
+
+ipcMain.on('orb:stunt', (_e, name) => brain?.stunt(name));
+
+// Skin changes (menu or voice) are saved and sent straight to the robot, without the
+// config:changed reload, so a conversation in progress isn't cut off.
+function setSkin(name) {
+  if (!SKIN_LABELS[name]) return;
+  saveConfig({ skin: name });
+  orbWin?.webContents.send('orb:skin', name);
+}
+ipcMain.on('orb:setSkin', (_e, name) => setSkin(name));
 
 // ---------- chat logs: userData/logs/YYYY-MM-DD.txt ----------
 const logsDir = () => path.join(app.getPath('userData'), 'logs');
@@ -213,6 +249,19 @@ ipcMain.on('menu:show', () => {
       ? { label: 'Wake up', click: () => brain?.interact() }
       : { label: 'Take a nap', click: () => brain?.sleepNow() },
     {
+      label: 'Do a trick',
+      submenu: STUNTS.map((s) => ({ label: STUNT_LABELS[s], click: () => brain?.stunt(s) })),
+    },
+    {
+      label: 'Skin',
+      submenu: Object.entries(SKIN_LABELS).map(([name, label]) => ({
+        label,
+        type: 'radio',
+        checked: loadConfig().skin === name,
+        click: () => setSkin(name),
+      })),
+    },
+    {
       label: 'Always on top',
       type: 'checkbox',
       checked: orbWin?.isAlwaysOnTop() ?? true,
@@ -240,6 +289,7 @@ if (!app.requestSingleInstanceLock()) {
     );
 
     const cfg = loadConfig();
+    if (cfg.detectApps !== false) scanApps();
     createOrbWindow();
     registerHotkey(cfg.hotkey);
     if (!cfg.apiKey) openSettings();

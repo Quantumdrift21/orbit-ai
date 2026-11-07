@@ -51,7 +51,7 @@
     <div id="btns"></div>
     <div>Light and dark desktop backgrounds. Move the mouse to make it look; click a robot to bounce.</div>
     <script type="module">
-      import { Robot } from './robot.js';
+      import { Robot, SKIN_NAMES } from './robot.js';
       const robots = [new Robot(document.getElementById('c1')), new Robot(document.getElementById('c2'))];
       let state = 'idle';
       robots.forEach((r) => {
@@ -79,6 +79,31 @@
         btns.appendChild(b);
       }
       window.setRobotState = (s) => [...btns.children].find((b) => b.textContent === s)?.click();
+
+      for (const skin of SKIN_NAMES) {
+        const b = document.createElement('button');
+        b.textContent = `skin: ${skin}`;
+        b.onclick = () => robots.forEach((r) => r.setSkin(skin));
+        btns.appendChild(b);
+      }
+
+      // Stunts: in the app the brain sends the progress; here we play it locally (same timings).
+      const SECS = { spin: 1.1, flip: 1.0, roll: 1.2, loop: 1.8 };
+      for (const name of Object.keys(SECS)) {
+        const b = document.createElement('button');
+        b.textContent = `trick: ${name}`;
+        b.onclick = () => {
+          const start = performance.now();
+          const tick = () => {
+            const p = (performance.now() - start) / 1000 / SECS[name];
+            const trick = p < 1 ? { name, p } : null;
+            robots.forEach((r) => r.setMotion({ vx: 0, vy: 0, sleeping: false, event: null, trick }));
+            if (trick) requestAnimationFrame(tick);
+          };
+          tick();
+        };
+        btns.appendChild(b);
+      }
     </script>
   </body>
 </html>

@@ -120,6 +120,15 @@
       #msg.warn {
         color: #ffb84d;
       }
+      label.check {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+      }
+      label.check input {
+        width: auto;
+        margin: 0;
+      }
     </style>
   </head>
   <body>
@@ -178,12 +187,30 @@
       <option>Sulafat</option>
     </select>
 
-    <label for="language">Language</label>
-    <select id="language">
-      <option value="auto">English + Tamil (reply in the language I speak)</option>
-      <option value="en">English only</option>
-      <option value="ta">Tamil only (தமிழ்)</option>
+    <label for="skin">Skin</label>
+    <select id="skin">
+      <option value="metallic">Metallic – brushed silver</option>
+      <option value="leather">Leather – stitched brown, brass trim</option>
+      <option value="matte">Matte – soft vinyl toy</option>
+      <option value="velvet">Velvet – royal purple, gold trim</option>
+      <option value="crazy">Crazy – holographic rainbow</option>
     </select>
+
+    <label for="language">Main language</label>
+    <select id="language">
+      <option value="auto">Auto – follow the conversation</option>
+    </select>
+    <label for="language2">Second language (optional)</label>
+    <select id="language2">
+      <option value="">None</option>
+    </select>
+    <div class="hint" id="languageHint"></div>
+
+    <label class="check"><input id="detectApps" type="checkbox" /> Open installed apps by voice</label>
+    <div class="hint">
+      Finds the apps in your Start menu, so you can say “open Blender”. The list stays on this PC.
+      <span id="appsInfo"></span> <a href="#" id="rescan">Rescan</a>
+    </div>
 
     <label for="micLabel">Microphone</label>
     <select id="micLabel">
@@ -213,6 +240,6 @@
       <button id="save" type="button" class="primary">Save</button>
     </div>
 
-    <script src="settings.js"></script>
+    <script type="module" src="settings.js"></script>
   </body>
 </html>

@@ -1,7 +1,8 @@
-// PC actions Gemini may call. Deliberately limited: a fixed list of apps and http(s) URLs only,
-// and nothing the model says is ever passed to a shell.
+// PC actions Gemini may call. Deliberately limited: apps from a fixed list or the user's own Start
+// menu, and http(s) URLs. Nothing the model says is ever passed to a shell: its text only selects
+// an entry, and the entry's own target is launched.
 const { shell } = require('electron');
-const { spawn } = require('child_process');
+const { spawn, execFile } = require('child_process');
 const fs = require('fs');
 const path = require('path');
 
@@ -49,7 +50,76 @@ const APPS = {
   photos: 'ms-photos:',
 };
 
-const APP_NAMES = Object.keys(APPS);
+const norm = (s) =>
+  String(s ?? '')
+    .toLowerCase()
+    .normalize('NFKD')
+    .replace(/[^\p{L}\p{N}]+/gu, ' ')
+    .trim();
+
+// ---------- apps found in the user's Start menu ----------
+// The list stays on this PC: Gemini only sends the name the user said, and it is matched here.
+let installed = []; // [{ name, key, appId }]
+
+// Never offered even if installed: tools that can wipe or reconfigure the PC, and doc/help links.
+const SKIP =
+  /uninstall|registry editor|powershell|recovery drive|\b(help|readme|read me|documentation|manual|release notes|license|on the web|website)\b/i;
+
+/** Parse `Get-StartApps | ConvertTo-Json` output into launchable, de-duplicated entries. */
+function parseStartApps(json) {
+  const list = [].concat(JSON.parse(String(json).replace(/^﻿/, '').trim() || '[]'));
+  const seen = new Set();
+  const out = [];
+  for (const { Name, AppID } of list) {
+    if (!Name || !AppID || SKIP.test(Name) || /\.(chm|txt|url|pdf|html?)$/i.test(AppID)) continue;
+    const key = norm(Name);
+    if (!key || seen.has(key)) continue;
+    seen.add(key);
+    out.push({ name: Name, key, appId: AppID });
+  }
+  return out;
+}
+
+/** Re-read the Start menu (takes a few seconds). Resolves to the number of apps found. */
+function scanStartApps() {
+  const cmd =
+    '[Console]::OutputEncoding = [Text.Encoding]::UTF8; Get-StartApps | Select-Object Name, AppID | ConvertTo-Json -Compress';
+  return new Promise((resolve) => {
+    execFile(
+      'powershell.exe',
+      ['-NoProfile', '-NonInteractive', '-Command', cmd],
+      { windowsHide: true, timeout: 30000, maxBuffer: 8 << 20 },
+      (err, stdout) => {
+        try {
+          if (!err) installed = parseStartApps(stdout);
+        } catch {
+          /* keep the previous list */
+        }
+        resolve(installed.length);
+      },
+    );
+  });
+}
+
+const setInstalledApps = (list) => (installed = list);
+const installedCount = () => installed.length;
+
+/** Match what the user said to one app: exact name, else a unique whole-word match. */
+function findApp(query) {
+  const q = norm(query);
+  if (q.length < 2) return { error: 'No app name given' };
+  const all = [...Object.keys(APPS).map((k) => ({ name: k, key: norm(k), builtin: true })), ...installed];
+  const exact = all.find((a) => a.key === q);
+  if (exact) return { app: exact };
+  const hits = all.filter((a) => ` ${a.key} `.includes(` ${q} `));
+  const starts = hits.filter((a) => a.key.startsWith(q));
+  if (hits.length === 1) return { app: hits[0] };
+  if (starts.length === 1) return { app: starts[0] };
+  if (hits.length)
+    return { error: `"${query}" matches several apps`, suggestions: hits.slice(0, 5).map((a) => a.name) };
+  const near = all.filter((a) => a.key.startsWith(q.slice(0, 3))).slice(0, 5);
+  return { error: `No app called "${query}" is installed`, suggestions: near.map((a) => a.name) };
+}
 
 function launch(exe, args = [], verbatim = false) {
   const child = spawn(exe, args, { detached: true, stdio: 'ignore', windowsVerbatimArguments: verbatim });
@@ -58,10 +128,16 @@ function launch(exe, args = [], verbatim = false) {
 }
 
 function openApp({ app } = {}) {
-  const name = String(app || '')
-    .toLowerCase()
-    .trim();
-  if (!APPS[name]) return { ok: false, error: `Unknown app "${app}". Allowed: ${APP_NAMES.join(', ')}` };
+  const found = findApp(app);
+  if (!found.app) {
+    return { ok: false, error: found.error, ...(found.suggestions?.length ? { suggestions: found.suggestions } : {}) };
+  }
+  if (!found.app.builtin) {
+    // Windows' own launcher for Start-menu entries; the ID comes from Windows, never from the model.
+    launch('explorer.exe', [`shell:AppsFolder\\${found.app.appId}`]);
+    return { ok: true, opened: found.app.name };
+  }
+  const name = found.app.name;
   if (BROWSERS[name]) {
     const exe = BROWSERS[name]();
     if (exe) {
@@ -110,4 +186,4 @@ function run(name, args) {
   }
 }
 
-module.exports = { run, APP_NAMES };
+module.exports = { run, scanStartApps, parseStartApps, setInstalledApps, installedCount, findApp };

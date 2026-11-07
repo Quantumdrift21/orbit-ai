@@ -16,13 +16,21 @@ function daypart(d = new Date()) {
   return 'night';
 }
 
-// How lively Orbit is at each time of day (seconds / px per second).
+// How lively Orbit is at each time of day (seconds / px per second; trick = chance of a stunt
+// when it arrives somewhere).
 const MOOD = {
-  morning: { journey: 0.6, speed: 230, rest: [4, 10], sleepAfter: 240, nap: [90, 240] },
-  afternoon: { journey: 0.45, speed: 190, rest: [6, 16], sleepAfter: 180, nap: [120, 360] },
-  evening: { journey: 0.3, speed: 150, rest: [8, 22], sleepAfter: 150, nap: [180, 480] },
-  night: { journey: 0.12, speed: 110, rest: [10, 30], sleepAfter: 60, nap: [900, 3600] },
+  morning: { journey: 0.6, speed: 230, rest: [4, 10], sleepAfter: 240, nap: [90, 240], trick: 0.35 },
+  afternoon: { journey: 0.45, speed: 190, rest: [6, 16], sleepAfter: 180, nap: [120, 360], trick: 0.25 },
+  evening: { journey: 0.3, speed: 150, rest: [8, 22], sleepAfter: 150, nap: [180, 480], trick: 0.15 },
+  night: { journey: 0.12, speed: 110, rest: [10, 30], sleepAfter: 60, nap: [900, 3600], trick: 0 },
 };
+
+// Flying stunts (seconds). The robot page draws the body's spin from the progress we send it;
+// 'loop' also flies the window around a circle so the whole robot does a loop-the-loop.
+const STUNT_SECS = { spin: 1.1, flip: 1.0, roll: 1.2, loop: 1.8 };
+const STUNTS = Object.keys(STUNT_SECS);
+const LOOP_RADIUS = 70; // px
+const easeInOut = (p) => (p < 0.5 ? 4 * p * p * p : 1 - Math.pow(-2 * p + 2, 3) / 2);
 
 class Brain {
   /**
@@ -86,6 +94,12 @@ class Brain {
     this.mode = 'rest';
     this.until = now() + rand(3, 6);
     this.flash('wake', 1.5);
+  }
+  /** Do a flying stunt: 'spin' | 'flip' | 'roll' | 'loop'. Ignored mid-stunt or while dragged. */
+  stunt(name) {
+    if (!STUNTS.includes(name) || this.trick || this.dragging) return;
+    if (this.mode === 'sleep' || this.mode === 'toBed') this.wake();
+    this.trick = { name, start: now(), dur: STUNT_SECS[name], origin: { ...this.pos } };
   }
   destroy() {
     clearInterval(this.timer);
@@ -170,7 +184,26 @@ class Brain {
     let desired = { x: 0, y: 0 };
     let steer = 2.2;
 
-    if (frozen) {
+    let trick = null; // progress sent to the robot page
+    if (this.trick && this.dragging) this.trick = null;
+    if (this.trick) {
+      // A stunt runs even mid-conversation (Gemini can ask for one); nothing else steers meanwhile.
+      const p = (t - this.trick.start) / this.trick.dur;
+      steer = 6;
+      if (p >= 1) {
+        this.trick = null;
+      } else {
+        trick = { name: this.trick.name, p: +p.toFixed(3) };
+        if (this.trick.name === 'loop') {
+          const a = easeInOut(p) * Math.PI * 2;
+          const o = this.trick.origin;
+          const gx = o.x + Math.sin(a) * LOOP_RADIUS;
+          const gy = o.y - (1 - Math.cos(a)) * LOOP_RADIUS;
+          desired = { x: (gx - this.pos.x) / dt, y: (gy - this.pos.y) / dt };
+          steer = 1e9; // follow the circle exactly
+        }
+      }
+    } else if (frozen) {
       steer = 6;
       // Roam off but nobody talking/dragging: it can't fly, so it naps (and wakes) in place.
       const parked = !this.enabled && !this.busy && !this.dragging && t >= this.pausedUntil;
@@ -211,6 +244,7 @@ class Brain {
             } else {
               this.mode = 'rest';
               this.until = t + rand(...mood.rest);
+              if (Math.random() < mood.trick) this.stunt(STUNTS[Math.floor(Math.random() * STUNTS.length)]);
             }
           }
           break;
@@ -285,10 +319,11 @@ class Brain {
       mode: this.mode,
       sleeping: this.mode === 'sleep',
       event: this.event,
+      trick,
       hover: over,
       look: { x: +((m.x - nc.x) / 500).toFixed(3), y: +((m.y - nc.y) / 500).toFixed(3) },
     });
   }
 }
 
-module.exports = { Brain };
+module.exports = { Brain, STUNTS };

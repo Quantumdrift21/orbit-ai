@@ -6,7 +6,7 @@
 
 Orbit floats over your other windows, flies around on its own, dodges your mouse and takes naps.
 Click it, ask anything out loud, and it answers with a real voice using Google's Gemini Live API.
-It speaks **English and Tamil**, and it can open apps and websites for you.
+It speaks **99 languages** (including English and Tamil), opens any app on your PC by voice, and does flying stunts.
 
 > Free and open source (MIT). You bring your own free Gemini API key.
 
@@ -16,15 +16,34 @@ It speaks **English and Tamil**, and it can open apps and websites for you.
 
 - **Voice chat**: push-to-talk. Click the robot (or press **Ctrl+Space**), speak, click again. Orbit answers out loud,
   with live captions.
-- **English and Tamil**: replies in the language you speak (mixed "Tanglish" too), or force one language in Settings.
+- **99 languages**: every language the Gemini Live API supports. Pick the one or two you speak in Settings (for
+  example Tamil + English, mixed "Tanglish" too) and Orbit replies only in those, even when speech recognition
+  mis-hears you as a similar-sounding language. Auto mode follows the conversation without any setup.
 - **A robot with a life of its own**: a small Three.js robot with a glowing face that listens, thinks, talks, gets
   surprised and falls asleep.
 - **Daily routine**: it roams the screen, goes on little journeys, flinches away from a fast mouse but lets you approach
   slowly, naps when nobody talks to it, and is calmer at night.
-- **Does small jobs**: "open YouTube", "search for biryani recipes", "open Notepad". It can only open websites and a
-  fixed list of apps, nothing else.
+- **Flying stunts**: spins, backflips, barrel rolls and loop-the-loops. It shows off on its own after a journey (more in
+  the morning, never at night), when you ask ("do a backflip!"), or from right-click → Do a trick.
+- **Opens your apps by voice**: Orbit finds the apps in your Start menu automatically, so "open Blender" or "open
+  Spotify" just works. It also opens websites: "open YouTube", "search for biryani recipes".
+- **Five skins**: Metallic, Leather, Matte, Velvet and a holographic Crazy skin (see below).
 - **Your choice of voice and devices**: 30 Gemini voices, pick your microphone and speaker in Settings.
 - **Private by design**: your API key is stored encrypted on your PC, and chat logs never leave it.
+
+### Skins
+
+![Orbit in its five skins: Metallic, Leather, Matte, Velvet and Crazy](docs/skins.png)
+
+| Skin     | Look                                                                    |
+| -------- | ----------------------------------------------------------------------- |
+| Metallic | Brushed silver with graphite trim (default)                             |
+| Leather  | Saddle-brown pebbled leather, cream stitching, brass trim               |
+| Matte    | Soft off-white with no shine, like a designer vinyl toy                 |
+| Velvet   | Deep plum with a soft pink velvet sheen, gold trim                      |
+| Crazy    | Holographic rainbow that slowly slides round the body; idle glow cycles |
+
+Change it from right-click → **Skin**, in Settings, or just ask: "wear your velvet skin".
 
 ## Requirements
 
@@ -56,12 +75,12 @@ The setup `.exe` lands in `dist/`. It is not code-signed, so Windows SmartScreen
 
 ## How to use
 
-| Action                     | What it does                                       |
-| -------------------------- | -------------------------------------------------- |
-| Click robot / Ctrl+Space   | Start listening, click again to send               |
-| Click while it is speaking | Interrupt and ask something new                    |
-| Drag the robot             | Move it anywhere                                   |
-| Right-click the robot      | Settings, chat logs, free roam, nap, always on top |
+| Action                     | What it does                                    |
+| -------------------------- | ----------------------------------------------- |
+| Click robot / Ctrl+Space   | Start listening, click again to send            |
+| Click while it is speaking | Interrupt and ask something new                 |
+| Drag the robot             | Move it anywhere                                |
+| Right-click the robot      | Settings, logs, roam, nap, tricks, skin, on top |
 
 Everything around the robot is click-through, so it never blocks the windows under it.
 
@@ -70,11 +89,15 @@ Everything around the robot is click-through, so it never blocks the windows und
 - "What's the weather like in Chennai usually in December?"
 - "இன்னைக்கு என்ன சமைக்கலாம்?" (What can I cook today?)
 - "Open YouTube and search for lo-fi music"
-- "Open Calculator"
+- "Open Blender" / "Open Calculator"
+- "Do a backflip!" / "Show me a loop-the-loop"
+- "Wear your leather skin" / "Go crazy!"
 
-Apps it can open: Chrome, Edge, Brave, Notepad, Calculator, File Explorer, Paint, Settings, Task Manager, Command
-Prompt, VS Code, Spotify, WhatsApp, Steam, OBS Studio, VLC, Camera and Photos (if installed).
-If the browser you ask for is missing, it uses your default browser and tells you.
+**Apps it can open:** anything in your Start menu (found automatically, refresh with Settings → Rescan), plus Chrome,
+Edge, Brave, Notepad, Calculator, File Explorer, Paint, Settings, Task Manager, Command Prompt, VS Code, Spotify,
+WhatsApp, Steam, OBS Studio, VLC, Camera and Photos. If a name fits several apps ("Visual Studio"), Orbit asks which one.
+For safety it never opens uninstallers, PowerShell, Registry Editor or Recovery Drive. If the browser you ask for is
+missing, it uses your default browser and tells you.
 
 ## Settings
 
@@ -85,7 +108,9 @@ Right-click the robot → **Settings…**
 | API key       | Stored encrypted with Windows DPAPI                                                 |
 | Model         | Default `gemini-3.8-live`; any Gemini Live model name works                         |
 | Voice         | 30 Gemini voices                                                                    |
-| Language      | Auto (English or Tamil), English only, or Tamil only                                |
+| Skin          | Metallic, Leather, Matte, Velvet or Crazy                                           |
+| Languages     | Main + optional second language (any of 99), or Auto. Picking them is most reliable |
+| Apps by voice | Find Start-menu apps automatically (on by default), with a Rescan link              |
 | Microphone    | With a live level meter. Virtual mics (Camo, VB-Cable, OBS…) are skipped by default |
 | Speaker       | With a test chime                                                                   |
 | Hotkey        | Default Ctrl+Space                                                                  |
@@ -96,6 +121,8 @@ Right-click the robot → **Settings…**
 - **Your API key** is saved only on your PC, encrypted, in `%APPDATA%\orbit-ai\config.json`. It is never in this
   repository and never sent anywhere except to Google's Gemini API.
 - **Your voice** is sent to Google only while Orbit is listening (after you click). It is not always listening.
+- **Your list of installed apps** never leaves your PC. Gemini only gets the app name you say, and Orbit matches it
+  locally.
 - **Chat logs** (text transcripts) are saved only on your PC in `%APPDATA%\orbit-ai\logs`. Open them from the
   right-click menu, delete them any time.
 - Your conversations are handled by Google under the [Gemini API terms](https://ai.google.dev/gemini-api/terms). On the
@@ -106,22 +133,25 @@ Right-click the robot → **Settings…**
 - **"No sound from …"**: Orbit picked a silent microphone. Right-click → Settings → Microphone, and watch the level
   meter move while you speak.
 - **It says "Right-click → Settings to add API key"**: no key is saved yet.
+- **It replies in the wrong language** (e.g. Hindi when you spoke Tamil): speech recognition mis-heard you as a
+  similar-sounding language. Set your Main and Second language in Settings instead of Auto.
 - **Can't find the robot**: press Ctrl+Space, its status text appears. It has no taskbar icon on purpose.
 
 ## Project layout
 
-| File                                  | What it does                                                   |
-| ------------------------------------- | -------------------------------------------------------------- |
-| `main.js`                             | Windows, hotkey, menu, settings storage (encrypted key)        |
-| `brain.js`                            | Roaming, mouse dodging, naps, daily routine, click-through     |
-| `actions.js`                          | The apps and websites Gemini may open, with safety checks      |
-| `preload.js`                          | The small, safe bridge between the window and the main process |
-| `renderer/app.js`                     | Listen → think → speak state machine                           |
-| `renderer/robot.js`                   | The 3D robot (Three.js) and its animations                     |
-| `renderer/gemini.js`                  | Gemini Live WebSocket client                                   |
-| `renderer/audio.js`, `pcm-worklet.js` | Microphone capture and voice playback                          |
-| `renderer/settings.*`                 | Settings window                                                |
-| `renderer/preview.html`               | Try the robot's moods in a browser (`npx serve renderer`)      |
+| File                                  | What it does                                                         |
+| ------------------------------------- | -------------------------------------------------------------------- |
+| `main.js`                             | Windows, hotkey, menu, settings storage (encrypted key)              |
+| `brain.js`                            | Roaming, mouse dodging, naps, daily routine, click-through           |
+| `actions.js`                          | The apps and websites Gemini may open, with safety checks            |
+| `preload.js`                          | The small, safe bridge between the window and the main process       |
+| `renderer/app.js`                     | Listen → think → speak state machine                                 |
+| `renderer/robot.js`                   | The 3D robot (Three.js) and its animations                           |
+| `renderer/gemini.js`                  | Gemini Live WebSocket client                                         |
+| `renderer/audio.js`, `pcm-worklet.js` | Microphone capture and voice playback                                |
+| `renderer/settings.*`                 | Settings window                                                      |
+| `renderer/languages.js`               | The 99 Gemini Live languages and the reply-language rules            |
+| `renderer/preview.html`               | Try the robot's moods and tricks in a browser (`npx serve renderer`) |
 
 ## Contributing
 

@@ -1,6 +1,7 @@
-import { Robot } from './robot.js';
+import { Robot, SKIN_NAMES } from './robot.js';
 import { Mic, Player } from './audio.js';
 import { GeminiLive } from './gemini.js';
+import { languageRule } from './languages.js';
 
 const canvas = document.getElementById('orb');
 const statusEl = document.getElementById('status');
@@ -21,34 +22,53 @@ let silenceTimer = null;
 let thinkTimer = null;
 let captionTimer = null;
 
-// Native-audio Live models pick the spoken language themselves (no languageCode field),
-// so the language choice is enforced through the system instructions.
-const LANGUAGE_RULES = {
-  auto:
-    'LANGUAGE: The user speaks English or Tamil (sometimes mixed "Tanglish"). ' +
-    'Always reply in the same language the user just used: English → English, Tamil → Tamil. ' +
-    'If they mix both, reply in natural conversational Tamil with common English words. Never use other languages.',
-  en: 'LANGUAGE: Always reply in English only, even if the user speaks another language.',
-  ta:
-    'LANGUAGE: Always reply in Tamil (தமிழ்) only, using natural spoken Tamil, even if the user speaks English. ' +
-    'Keep common English technical words as they are.',
-};
-
 const UNCLEAR_RULE =
   'If the user audio is silent, noisy or unclear, just say briefly that you could not hear them and ask them to repeat.';
 
-const appNames = await window.orbit.listApps();
+const TRICKS = { spin: 'spin around', flip: 'backflip', roll: 'barrel roll', loop: 'loop-the-loop' };
 
 const TOOLS = [
   {
     functionDeclarations: [
       {
         name: 'open_app',
-        description: "Open an app on the user's Windows PC.",
+        description:
+          "Open an app installed on the user's Windows PC, by the name the user said (e.g. Spotify, Blender, " +
+          'Calculator). If the result has "suggestions", ask the user which one they meant.',
         parameters: {
           type: 'OBJECT',
-          properties: { app: { type: 'STRING', enum: appNames, description: 'App to open' } },
+          properties: { app: { type: 'STRING', description: 'App name as the user said it' } },
           required: ['app'],
+        },
+      },
+      {
+        name: 'do_trick',
+        description:
+          'Make your little robot body do a flying stunt, when the user asks for a trick, spin, flip or loop, ' +
+          'or to celebrate. Say something playful while doing it.',
+        parameters: {
+          type: 'OBJECT',
+          properties: {
+            trick: {
+              type: 'STRING',
+              enum: Object.keys(TRICKS),
+              description: Object.entries(TRICKS)
+                .map(([k, v]) => `${k} = ${v}`)
+                .join(', '),
+            },
+          },
+          required: ['trick'],
+        },
+      },
+      {
+        name: 'change_skin',
+        description:
+          "Change your robot body's skin when the user asks: metallic (brushed silver), leather (stitched brown), " +
+          'matte (soft vinyl), velvet (purple with gold) or crazy (holographic rainbow).',
+        parameters: {
+          type: 'OBJECT',
+          properties: { skin: { type: 'STRING', enum: SKIN_NAMES } },
+          required: ['skin'],
         },
       },
       {
@@ -74,7 +94,8 @@ const TOOLS = [
 ];
 
 const ACTION_RULE =
-  'PC ACTIONS: You can open apps (open_app) and websites (open_website) with your tools. ' +
+  'PC ACTIONS: You can open apps (open_app) and websites (open_website), do flying tricks (do_trick) and ' +
+  'change your skin (change_skin). ' +
   'Only say something was opened after the tool returns ok:true; if it fails, say so. ' +
   'If the result has a "note", tell the user that note briefly. ' +
   'You cannot do any other actions on the PC (no typing, clicking, files, or settings changes) – say so honestly if asked.';
@@ -82,7 +103,7 @@ const ACTION_RULE =
 const sessionConfig = () => ({
   ...cfg,
   tools: TOOLS,
-  systemPrompt: `${cfg.systemPrompt}\n\n${LANGUAGE_RULES[cfg.language] || LANGUAGE_RULES.auto}\n${UNCLEAR_RULE}\n\n${ACTION_RULE}`,
+  systemPrompt: `${cfg.systemPrompt}\n\n${languageRule(cfg.language, cfg.language2)}\n${UNCLEAR_RULE}\n\n${ACTION_RULE}`,
 });
 
 const prettyKey = (k) => (k || '').replace(/Control|CommandOrControl/g, 'Ctrl');
@@ -156,10 +177,22 @@ async function ensureLive() {
     },
     onToolCall: async (calls) => {
       turnDone = false;
-      if (state !== 'speaking') setState('thinking', 'Opening…');
+      const tricksOnly = calls.every((fc) => fc.name === 'do_trick' || fc.name === 'change_skin');
+      if (state !== 'speaking') setState('thinking', tricksOnly ? 'Showing off…' : 'Opening…');
       const responses = [];
       for (const fc of calls) {
-        const result = await window.orbit.runAction(fc.name, fc.args || {});
+        let result;
+        if (fc.name === 'do_trick') {
+          const trick = TRICKS[fc.args?.trick] ? fc.args.trick : 'spin';
+          window.orbit.stunt(trick);
+          result = { ok: true, did: TRICKS[trick] };
+        } else if (fc.name === 'change_skin') {
+          const skin = SKIN_NAMES.includes(fc.args?.skin) ? fc.args.skin : null;
+          if (skin) window.orbit.setSkin(skin);
+          result = skin ? { ok: true, skin } : { ok: false, error: `Skins: ${SKIN_NAMES.join(', ')}` };
+        } else {
+          result = await window.orbit.runAction(fc.name, fc.args || {});
+        }
         responses.push({ id: fc.id, name: fc.name, response: result });
       }
       session.sendToolResponse(responses);
@@ -295,10 +328,16 @@ window.orbit.onToggle(() => {
   toggle();
 });
 player.setOutput(cfg.speakerLabel);
+orb.setSkin(cfg.skin);
+window.orbit.onSkin((skin) => {
+  cfg.skin = skin;
+  orb.setSkin(skin);
+});
 
 window.orbit.onConfigChanged(async () => {
   cfg = await window.orbit.getConfig();
   player.setOutput(cfg.speakerLabel);
+  orb.setSkin(cfg.skin);
   live?.close();
   live = null;
   if (state === 'idle' || state === 'error') setState('idle');

@@ -6,7 +6,10 @@ body {
   overflow: hidden;
   background: transparent;
   user-select: none;
-  font-family: 'Segoe UI Variable', 'Segoe UI', 'Nirmala UI', system-ui, sans-serif; /* Nirmala UI = Tamil glyphs */
+  /* Windows fonts covering Gemini's languages: Nirmala UI = Indic scripts, then CJK, Ethiopic, Khmer/Lao, Myanmar. */
+  font-family:
+    'Segoe UI Variable', 'Segoe UI', 'Nirmala UI', 'Microsoft YaHei UI', 'Microsoft JhengHei UI', 'Yu Gothic UI',
+    'Malgun Gothic', 'Ebrima', 'Leelawadee UI', 'Myanmar Text', system-ui, sans-serif;
 }
 
 #stage {
