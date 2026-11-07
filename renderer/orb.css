@@ -1,0 +1,77 @@
+html,
+body {
+  margin: 0;
+  width: 100%;
+  height: 100%;
+  overflow: hidden;
+  background: transparent;
+  user-select: none;
+  font-family: 'Segoe UI Variable', 'Segoe UI', 'Nirmala UI', system-ui, sans-serif; /* Nirmala UI = Tamil glyphs */
+}
+
+#stage {
+  position: relative;
+  width: 100%;
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+}
+
+/* Canvas fills the whole window so glow never hits an edge. */
+#orb {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+}
+#orb.hot {
+  cursor: pointer;
+}
+
+#caption {
+  position: absolute;
+  top: 150px;
+  left: 8px;
+  right: 8px;
+  min-height: 0;
+  max-height: 46px;
+  overflow: hidden;
+  text-align: center;
+  font-size: 11.5px;
+  line-height: 1.35;
+  color: #fff;
+  text-shadow:
+    0 1px 4px rgba(0, 0, 0, 0.9),
+    0 0 10px rgba(0, 0, 0, 0.6);
+  opacity: 0;
+  transition: opacity 0.4s ease;
+  pointer-events: none;
+}
+#caption.show {
+  opacity: 1;
+}
+
+#status {
+  position: absolute;
+  bottom: 6px;
+  max-width: 184px;
+  text-align: center;
+  padding: 3px 10px;
+  border-radius: 999px;
+  font-size: 10.5px;
+  opacity: 0;
+  transition: opacity 0.3s ease;
+  letter-spacing: 0.02em;
+  color: rgba(255, 255, 255, 0.92);
+  background: rgba(10, 10, 20, 0.55);
+  backdrop-filter: blur(6px);
+  pointer-events: none;
+}
+#status.show,
+#status.hover {
+  opacity: 1;
+}
+#status.error {
+  background: rgba(120, 20, 30, 0.75);
+}

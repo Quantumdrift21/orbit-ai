@@ -1,0 +1,16 @@
+node_modules/
+dist/
+
+# Secrets and personal data never belong in the repo.
+# (Orbit itself keeps the API key and chat logs in %APPDATA%\orbit-ai, outside this folder.)
+.env
+.env.*
+config.json
+logs/
+*.log
+
+# Local tool and editor folders
+.claude/
+.vscode/
+.idea/
+Thumbs.db

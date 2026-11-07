@@ -1,0 +1,52 @@
+{
+  "name": "orbit-ai",
+  "version": "0.1.0",
+  "description": "A tiny 3D robot on your Windows desktop that talks with you, powered by the Gemini Live API",
+  "author": "Vignesh Jayasankar (https://github.com/Quantumdrift21)",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/Quantumdrift21/orbit-ai.git"
+  },
+  "homepage": "https://github.com/Quantumdrift21/orbit-ai#readme",
+  "bugs": "https://github.com/Quantumdrift21/orbit-ai/issues",
+  "keywords": [
+    "gemini",
+    "voice-assistant",
+    "electron",
+    "desktop-pet",
+    "windows",
+    "tamil",
+    "threejs"
+  ],
+  "main": "main.js",
+  "scripts": {
+    "start": "electron .",
+    "dist": "electron-builder --win",
+    "test": "node --test",
+    "format": "prettier --write .",
+    "format:check": "prettier --check ."
+  },
+  "devDependencies": {
+    "electron": "^37.2.0",
+    "electron-builder": "^26.0.12",
+    "prettier": "3.9.10"
+  },
+  "build": {
+    "appId": "com.orbit.ai",
+    "productName": "Orbit AI",
+    "files": [
+      "main.js",
+      "actions.js",
+      "brain.js",
+      "preload.js",
+      "renderer/**/*"
+    ],
+    "win": {
+      "target": "nsis"
+    }
+  },
+  "dependencies": {
+    "three": "^0.170.0"
+  }
+}

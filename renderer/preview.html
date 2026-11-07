@@ -1,0 +1,84 @@
+<!doctype html>
+<html>
+  <head>
+    <meta charset="utf-8" />
+    <title>Orbit robot preview</title>
+    <style>
+      body {
+        margin: 0;
+        background: #2b2f38;
+        color: #ddd;
+        font:
+          13px 'Segoe UI',
+          sans-serif;
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        gap: 12px;
+        padding: 16px;
+      }
+      .stage {
+        display: flex;
+        gap: 16px;
+      }
+      canvas {
+        width: 300px;
+        height: 300px;
+        border-radius: 12px;
+      }
+      #c1 {
+        background: #f2f3f5;
+      }
+      #c2 {
+        background: #101218;
+      }
+      button {
+        background: #3a3f4b;
+        color: #fff;
+        border: 0;
+        border-radius: 6px;
+        padding: 6px 12px;
+        cursor: pointer;
+      }
+      button.on {
+        background: #38d9ff;
+        color: #000;
+      }
+    </style>
+  </head>
+  <body>
+    <div class="stage"><canvas id="c1"></canvas><canvas id="c2"></canvas></div>
+    <div id="btns"></div>
+    <div>Light and dark desktop backgrounds. Move the mouse to make it look; click a robot to bounce.</div>
+    <script type="module">
+      import { Robot } from './robot.js';
+      const robots = [new Robot(document.getElementById('c1')), new Robot(document.getElementById('c2'))];
+      let state = 'idle';
+      robots.forEach((r) => {
+        r.levelSource = () =>
+          state === 'listening' || state === 'speaking'
+            ? Math.max(0, Math.sin(performance.now() / 110) * Math.sin(performance.now() / 370 + 1))
+            : 0;
+        r.canvas.addEventListener('click', () => r.bounce());
+      });
+      window.addEventListener('mousemove', (e) => {
+        robots.forEach((r) => {
+          const b = r.canvas.getBoundingClientRect();
+          r.setLook((e.clientX - (b.left + b.width / 2)) / 400, (e.clientY - (b.top + b.height / 2)) / 400);
+        });
+      });
+      const btns = document.getElementById('btns');
+      for (const s of ['idle', 'listening', 'thinking', 'speaking', 'error']) {
+        const b = document.createElement('button');
+        b.textContent = s;
+        b.onclick = () => {
+          state = s;
+          robots.forEach((r) => r.setState(s));
+          [...btns.children].forEach((x) => x.classList.toggle('on', x === b));
+        };
+        btns.appendChild(b);
+      }
+      window.setRobotState = (s) => [...btns.children].find((b) => b.textContent === s)?.click();
+    </script>
+  </body>
+</html>
