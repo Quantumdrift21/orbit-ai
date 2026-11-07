@@ -16,6 +16,7 @@ const BUMPS = {
   attention: { happy: 0.08 },
   trick: { excited: 0.5, happy: 0.1 },
   morning: { excited: 0.5 },
+  claude: { happy: 0.1 }, // Claude Code finished a task
   dodge: { grumpy: 0.25 }, // about 2 s of dodging before Orbit turns grumpy
 };
 

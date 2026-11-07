@@ -112,18 +112,75 @@ const ACTION_RULE =
   'If the result has a "note", tell the user that note briefly. ' +
   'You cannot do any other actions on the PC (no typing, clicking, files, or settings changes) – say so honestly if asked.';
 
+// Only offered when Orbit watches at least one AI agent. Gemini can read a filtered summary on
+// request, but can never approve or deny an agent's requests (only the card's buttons can).
+const AGENT_FLAGS = ['watchClaude', 'watchCodex', 'watchCopilot', 'watchOpencode', 'watchAntigravity', 'watchHermes'];
+const watchingAgents = () => AGENT_FLAGS.some((f) => cfg[f]);
+const AGENT_TOOL = {
+  name: 'agent_status',
+  description:
+    'Only when the user asks what their AI coding agents (Claude Code, Codex, Copilot, OpenCode, Antigravity, ' +
+    'Hermes) are doing or whether they finished: returns a short summary of recent activity on this PC.',
+  parameters: { type: 'OBJECT', properties: {} },
+};
+const AGENT_RULE =
+  'AI AGENTS: Use agent_status when asked about Claude Code or other coding agents. You cannot approve or deny ' +
+  "their requests; tell the user to click Allow or Deny on Orbit's card.";
+
 const sessionConfig = () => ({
   ...cfg,
-  tools: TOOLS,
+  tools: watchingAgents() ? [{ functionDeclarations: [...TOOLS[0].functionDeclarations, AGENT_TOOL] }] : TOOLS,
   systemPrompt:
     `${cfg.systemPrompt}\n\n${languageRule(cfg.language, cfg.language2)}\n${UNCLEAR_RULE}\n\n${ACTION_RULE}` +
-    (MOOD_LINES[mood] ? `\n\n${MOOD_LINES[mood]}` : ''),
+    (MOOD_LINES[mood] ? `\n\n${MOOD_LINES[mood]}` : '') +
+    (watchingAgents() ? `\n\n${AGENT_RULE}` : ''),
+});
+
+// ---------- Claude Code alerts: caption + Windows' offline voice (nothing goes to Google) ----------
+const claudeQueue = [];
+let claudeCaptionTimer = null;
+const localVoice = () => {
+  const voices = speechSynthesis.getVoices().filter((v) => v.localService);
+  return voices.find((v) => /^en/i.test(v.lang)) || voices[0];
+};
+speechSynthesis.getVoices(); // starts loading the voice list
+
+function sayLocally(text) {
+  if (!text) return;
+  if (state !== 'idle') {
+    // Never talk over a Gemini conversation; play it once Orbit is idle again.
+    if (claudeQueue.length < 5) claudeQueue.push(text);
+    return;
+  }
+  const voice = localVoice();
+  if (!voice) {
+    // Windows voices may still be loading on the first alert: try once more when they arrive.
+    if (!speechSynthesis.getVoices().length)
+      speechSynthesis.addEventListener('voiceschanged', () => sayLocally(text), { once: true });
+    return; // no offline voice installed: the caption is enough
+  }
+  const u = new SpeechSynthesisUtterance(text);
+  u.voice = voice;
+  u.rate = 1.05;
+  speechSynthesis.speak(u);
+}
+
+window.orbit.onClaudeEvent((r) => {
+  if (state === 'idle') {
+    // Show the start of the alert ("Claude error (project): …"); showCaption keeps the end, for live speech.
+    clearTimeout(captionTimer);
+    captionEl.textContent = r.caption.length > 90 ? r.caption.slice(0, 89) + '…' : r.caption;
+    captionEl.classList.add('show');
+    clearTimeout(claudeCaptionTimer);
+    claudeCaptionTimer = setTimeout(() => captionEl.classList.remove('show'), 6000);
+  }
+  sayLocally(r.say);
 });
 
 const prettyKey = (k) => (k || '').replace(/Control|CommandOrControl/g, 'Ctrl');
 const labels = () => ({
   idle: cfg.apiKey ? `Click or press ${prettyKey(cfg.hotkey)}` : 'Right-click → Settings to add API key',
-  listening: 'Listening… click to send',
+  listening: 'Listening… pause to send',
   thinking: 'Thinking…',
   speaking: 'Speaking…',
 });
@@ -144,6 +201,7 @@ function setState(s, text) {
   if (s === 'idle') {
     clearTimeout(captionTimer);
     captionTimer = setTimeout(() => captionEl.classList.remove('show'), 4000);
+    while (claudeQueue.length) sayLocally(claudeQueue.shift()); // alerts held during the conversation
   }
 }
 
@@ -158,6 +216,7 @@ function showError(message) {
 
 function showCaption(text) {
   clearTimeout(captionTimer);
+  clearTimeout(claudeCaptionTimer); // an older alert timer must not hide this caption
   const t = text.trim();
   captionEl.textContent = t.length > 90 ? '…' + t.slice(-90) : t;
   captionEl.classList.toggle('show', !!t);
@@ -192,7 +251,8 @@ async function ensureLive() {
     onToolCall: async (calls) => {
       turnDone = false;
       const tricksOnly = calls.every((fc) => fc.name === 'do_trick' || fc.name === 'change_skin');
-      if (state !== 'speaking') setState('thinking', tricksOnly ? 'Showing off…' : 'Opening…');
+      const label = calls.every((fc) => fc.name === 'agent_status') ? 'Checking agents…' : 'Opening…';
+      if (state !== 'speaking') setState('thinking', tricksOnly ? 'Showing off…' : label);
       const responses = [];
       for (const fc of calls) {
         let result;
@@ -200,6 +260,8 @@ async function ensureLive() {
           const trick = TRICKS[fc.args?.trick] ? fc.args.trick : 'spin';
           window.orbit.stunt(trick);
           result = { ok: true, did: TRICKS[trick] };
+        } else if (fc.name === 'agent_status') {
+          result = watchingAgents() ? await window.orbit.claudeStatus() : { ok: false, error: 'Not watching' };
         } else if (fc.name === 'change_skin') {
           const skin = SKIN_NAMES.includes(fc.args?.skin) ? fc.args.skin : null;
           if (skin) window.orbit.setSkin(skin);
@@ -238,6 +300,7 @@ async function ensureLive() {
 async function startListening() {
   try {
     player.stop();
+    speechSynthesis.cancel(); // stop any Claude alert so the mic doesn't hear Orbit
     const l = await ensureLive();
     turnDone = false;
     replyText = '';
@@ -247,6 +310,7 @@ async function startListening() {
     l.startTurn();
     await mic.start((buf) => l.sendAudio(buf), cfg.micLabel);
     setState('listening');
+    watchListening();
     // A virtual mic (e.g. Camo with no phone connected) delivers pure silence.
     clearTimeout(silenceTimer);
     silenceTimer = setTimeout(() => {
@@ -262,7 +326,53 @@ async function startListening() {
   }
 }
 
+// Listening ends by itself, so a stray click or hotkey can't leave the mic open (holding back
+// agent alerts): after a short pause once you've spoken it sends; if it hears nothing it cancels.
+const SPEECH_LEVEL = 0.1; // mic.level(): normal speech ~0.1-0.4, room noise ~0.01-0.04
+const PAUSE_MS = 3000;
+const NOTHING_MS = 12000;
+const MAX_MS = 60000;
+let listenWatch = null;
+
+function watchListening() {
+  clearInterval(listenWatch);
+  const started = Date.now();
+  let spoke = false;
+  let lastVoice = started;
+  listenWatch = setInterval(() => {
+    if (state !== 'listening') return clearInterval(listenWatch);
+    const now = Date.now();
+    if (mic.level() > SPEECH_LEVEL) {
+      spoke = true;
+      lastVoice = now;
+    }
+    const done = spoke ? now - lastVoice > PAUSE_MS || now - started > MAX_MS : now - started > NOTHING_MS;
+    if (!done) return;
+    clearInterval(listenWatch);
+    if (spoke)
+      toggle(); // sends what was heard, like a click
+    else cancelListening();
+  }, 200);
+}
+
+/** Stop listening without sending anything (nothing was said). */
+async function cancelListening() {
+  if (busy || state !== 'listening') return;
+  busy = true;
+  try {
+    clearTimeout(silenceTimer);
+    await mic.stop();
+    live?.close(); // drops the half-started turn
+    live = null;
+    showCaption("Didn't hear anything");
+    setState('idle');
+  } finally {
+    busy = false;
+  }
+}
+
 async function stopListening() {
+  clearInterval(listenWatch);
   clearTimeout(silenceTimer);
   turnDone = false;
   setState('thinking');

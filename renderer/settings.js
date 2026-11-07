@@ -8,6 +8,12 @@ const fields = [
   'language',
   'language2',
   'detectApps',
+  'watchClaude',
+  'watchCodex',
+  'watchCopilot',
+  'watchOpencode',
+  'watchAntigravity',
+  'watchHermes',
   'micLabel',
   'speakerLabel',
   'hotkey',
@@ -44,6 +50,17 @@ $('rescan').addEventListener('click', (e) => {
   showAppsInfo(window.orbit.rescanApps());
 });
 showAppsInfo();
+
+// ---------- AI agents: mark what each supports, grey out ones that aren't installed ----------
+Promise.all([window.orbit.agentsInfo(), window.orbit.getConfig()]).then(([info, cfg]) => {
+  for (const a of Object.values(info)) {
+    const box = $(a.flag);
+    if (!box) continue;
+    const note = box.parentElement.querySelector('.hint');
+    note.textContent = !a.installed ? '(not installed)' : a.approve ? '(alerts + Allow/Deny)' : '(alerts)';
+    if (!a.installed && !cfg[a.flag]) box.disabled = true; // still lets you turn off one that was on
+  }
+});
 
 // ---------- audio devices ----------
 // Devices are saved by name (label) so the choice survives reboots / re-plugging.
@@ -175,7 +192,15 @@ $('save').addEventListener('click', async () => {
     return;
   }
   const res = await window.orbit.setConfig(cfg);
-  msg.className = res.hotkeyOk ? '' : 'warn';
-  msg.textContent = res.hotkeyOk ? 'Saved ✓' : 'Saved, but hotkey is invalid or in use';
-  if (res.hotkeyOk) setTimeout(() => window.orbit.closeSettings(), 700);
+  // A failed agent install is switched back off: show the boxes as they really are.
+  const saved = await window.orbit.getConfig();
+  for (const f of fields) if ($(f).type === 'checkbox') write($(f), saved[f]);
+  const warn = !res.hotkeyOk
+    ? 'Saved, but hotkey is invalid or in use'
+    : res.claudeError
+      ? `Saved, but watching failed: ${res.claudeError}`
+      : '';
+  msg.className = warn ? 'warn' : '';
+  msg.textContent = warn || 'Saved ✓';
+  if (!warn) setTimeout(() => window.orbit.closeSettings(), 700);
 });

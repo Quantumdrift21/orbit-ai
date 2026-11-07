@@ -14,7 +14,7 @@ It speaks **99 languages** (including English and Tamil), opens any app on your 
 
 ![Orbit's moods: idle, listening, speaking and napping](docs/screenshot.png)
 
-- **Voice chat**: push-to-talk. Click the robot (or press **Ctrl+Space**), speak, click again. Orbit answers out loud,
+- **Voice chat**: click the robot (or press **Ctrl+Space**) and speak; it sends when you pause (or click again). Orbit answers out loud,
   with live captions.
 - **99 languages**: every language the Gemini Live API supports. Pick the one or two you speak in Settings (for
   example Tamil + English, mixed "Tanglish" too) and Orbit replies only in those, even when speech recognition
@@ -28,6 +28,9 @@ It speaks **99 languages** (including English and Tamil), opens any app on your 
 - **Opens your apps by voice**: Orbit finds the apps in your Start menu automatically, so "open Blender" or "open
   Spotify" just works. It also opens websites: "open YouTube", "search for biryani recipes".
 - **Moods**: Orbit feels happy, excited, calm, bored, sleepy or grumpy, depending on how you treat it (see below).
+- **Watches your AI coding agents**: Claude Code, Codex, GitHub Copilot CLI, OpenCode, Antigravity and Hermes. It
+  tells you live when one needs you, finishes or hits an error, and lets you click Allow / Deny where the agent
+  supports it (see below).
 - **Five skins**: Metallic, Leather, Matte, Velvet and a holographic Crazy skin (see below).
 - **Your choice of voice and devices**: 30 Gemini voices, pick your microphone and speaker in Settings.
 - **Private by design**: your API key is stored encrypted on your PC, and chat logs never leave it.
@@ -94,7 +97,7 @@ The setup `.exe` lands in `dist/`. It is not code-signed, so Windows SmartScreen
 
 | Action                     | What it does                                    |
 | -------------------------- | ----------------------------------------------- |
-| Click robot / Ctrl+Space   | Start listening, click again to send            |
+| Click robot / Ctrl+Space   | Start listening; sends when you pause or click  |
 | Click while it is speaking | Interrupt and ask something new                 |
 | Drag the robot             | Move it anywhere                                |
 | Right-click the robot      | Settings, logs, roam, nap, tricks, skin, on top |
@@ -120,18 +123,50 @@ missing, it uses your default browser and tells you.
 
 Right-click the robot → **Settings…**
 
-| Setting       | Notes                                                                               |
-| ------------- | ----------------------------------------------------------------------------------- |
-| API key       | Stored encrypted with Windows DPAPI                                                 |
-| Model         | Default `gemini-3.8-live`; any Gemini Live model name works                         |
-| Voice         | 30 Gemini voices                                                                    |
-| Skin          | Metallic, Leather, Matte, Velvet or Crazy                                           |
-| Languages     | Main + optional second language (any of 99), or Auto. Picking them is most reliable |
-| Apps by voice | Find Start-menu apps automatically (on by default), with a Rescan link              |
-| Microphone    | With a live level meter. Virtual mics (Camo, VB-Cable, OBS…) are skipped by default |
-| Speaker       | With a test chime                                                                   |
-| Hotkey        | Default Ctrl+Space                                                                  |
-| System prompt | Change Orbit's personality                                                          |
+| Setting         | Notes                                                                               |
+| --------------- | ----------------------------------------------------------------------------------- |
+| API key         | Stored encrypted with Windows DPAPI                                                 |
+| Model           | Default `gemini-3.8-live`; any Gemini Live model name works                         |
+| Voice           | 30 Gemini voices                                                                    |
+| Skin            | Metallic, Leather, Matte, Velvet or Crazy                                           |
+| Languages       | Main + optional second language (any of 99), or Auto. Picking them is most reliable |
+| Apps by voice   | Find Start-menu apps automatically (on by default), with a Rescan link              |
+| Watch AI agents | One checkbox per agent (off by default); greyed out when not installed              |
+| Microphone      | With a live level meter. Virtual mics (Camo, VB-Cable, OBS…) are skipped by default |
+| Speaker         | With a test chime                                                                   |
+| Hotkey          | Default Ctrl+Space                                                                  |
+| System prompt   | Change Orbit's personality                                                          |
+
+## Watch your AI agents
+
+Orbit can keep an eye on the AI coding agents you use. Tick them in **Settings → Watch AI agents**, then start a new
+session in each agent.
+
+- **Live alerts**: "Codex needs you in my-project", "Claude finished in my-project: …", errors, and (for Claude Code)
+  subagents or tasks finishing. Spoken with your PC's offline voice and shown as a caption; the robot looks surprised
+  when an agent needs you.
+- **Approve by click**: when an agent asks permission (for example to run a command), a small card appears next to the
+  robot with **Allow**, **Deny** and **Use terminal**. If you don't click within 25 seconds, the agent shows its usual
+  prompt. Orbit never approves anything by voice.
+- **Ask about it**: "what are my agents doing?" and Orbit answers from a short summary.
+
+| Agent              | Alerts                                     | Allow / Deny card | What Orbit adds                                                       |
+| ------------------ | ------------------------------------------ | ----------------- | --------------------------------------------------------------------- |
+| Claude Code        | needs you, finished, errors, agents, tasks | ✓                 | `http` hooks in `~/.claude/settings.json`                             |
+| Codex              | finished, needs you                        | ✓                 | Entries in `~/.codex/hooks.json` (trust them once in Codex)           |
+| GitHub Copilot CLI | finished, needs you, errors                | ✓                 | Its own file `~/.copilot/hooks/orbit.json`                            |
+| OpenCode           | finished, needs you, errors                | —                 | Its own plugin `~/.config/opencode/plugins/orbit.js`                  |
+| Antigravity        | finished, errors                           | —                 | One `orbit` entry in `~/.gemini/config/hooks.json`                    |
+| Hermes Agent       | finished, needs you, errors                | —                 | A marked `hooks:` block in its `config.yaml` (approve once in Hermes) |
+
+How it works: Claude Code sends its events to Orbit directly; the others run a small bridge script
+(`%APPDATA%\orbit-ai\orbit-hook.ps1`) that forwards each event to Orbit on `127.0.0.1` only. Orbit keeps a
+`.orbit-backup` of any settings file it changes and never touches your other entries. If Orbit isn't running, the
+agents carry on as normal. Unticking an agent removes Orbit's entries.
+
+Not supported (no way for another app to follow them): DeepSeek (no official coding agent with hooks), Kilo Code,
+Roo Code, Warp. Others with hooks (Cursor, Windsurf, Qwen Code, Factory Droid, Crush, Goose, Kiro, Augment, Amp,
+OpenClaw) can be added the same way.
 
 ## Privacy
 
@@ -142,6 +177,9 @@ Right-click the robot → **Settings…**
   locally.
 - **Chat logs** (text transcripts) are saved only on your PC in `%APPDATA%\orbit-ai\logs`. Open them from the
   right-click menu, delete them any time.
+- **AI agent activity** stays on your PC: alerts use the offline Windows voice, keys and passwords are hidden as
+  `[hidden]`, and Orbit never reads the agents' transcripts. Only when you ask Orbit about your agents does a short,
+  filtered summary go to Gemini.
 - Your conversations are handled by Google under the [Gemini API terms](https://ai.google.dev/gemini-api/terms). On the
   free tier, Google may use your data to improve its products.
 
@@ -161,6 +199,8 @@ Right-click the robot → **Settings…**
 | `main.js`                             | Windows, hotkey, menu, settings storage (encrypted key)              |
 | `brain.js`                            | Roaming, mouse dodging, naps, daily routine, click-through           |
 | `mood.js`                             | Orbit's moods: what raises each feeling, how fast it fades           |
+| `agent-watch.js`                      | AI agent events → alerts, secret hiding, each agent's hook entries   |
+| `renderer/approve.*`                  | The Allow / Deny card for agents' permission requests                |
 | `actions.js`                          | The apps and websites Gemini may open, with safety checks            |
 | `preload.js`                          | The small, safe bridge between the window and the main process       |
 | `renderer/app.js`                     | Listen → think → speak state machine                                 |

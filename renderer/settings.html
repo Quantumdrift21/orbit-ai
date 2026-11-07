@@ -212,6 +212,28 @@
       <span id="appsInfo"></span> <a href="#" id="rescan">Rescan</a>
     </div>
 
+    <label>Watch AI agents</label>
+    <div class="hint">
+      Orbit tells you when an agent needs you, finishes or hits an error, and shows Allow / Deny buttons where the agent
+      allows it. Alerts use your PC's offline voice; nothing is sent to Google unless you ask Orbit about your agents.
+      Saving adds Orbit's hooks to that agent's settings (a backup is kept); start a new session afterwards.
+    </div>
+    <div id="agents">
+      <label class="check"><input id="watchClaude" type="checkbox" /> Claude Code <span class="hint"></span></label>
+      <label class="check"><input id="watchCodex" type="checkbox" /> Codex <span class="hint"></span></label>
+      <label class="check"
+        ><input id="watchCopilot" type="checkbox" /> GitHub Copilot CLI <span class="hint"></span
+      ></label>
+      <label class="check"><input id="watchOpencode" type="checkbox" /> OpenCode <span class="hint"></span></label>
+      <label class="check"
+        ><input id="watchAntigravity" type="checkbox" /> Antigravity <span class="hint"></span
+      ></label>
+      <label class="check"><input id="watchHermes" type="checkbox" /> Hermes Agent <span class="hint"></span></label>
+    </div>
+    <div class="hint">
+      Codex asks you to trust new hooks once (Codex → Settings → Hooks). Hermes asks once to approve each hook.
+    </div>
+
     <label for="micLabel">Microphone</label>
     <select id="micLabel">
       <option value="">Windows default</option>

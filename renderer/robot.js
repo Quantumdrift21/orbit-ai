@@ -601,7 +601,7 @@ export class Robot {
     if (this.state === 'listening') return 'listening';
     if (this.state === 'speaking') return 'speaking';
     if (this.motion.trick) return 'happy';
-    if (this.motion.event === 'dodge') return 'surprised';
+    if (this.motion.event === 'dodge' || this.motion.event === 'alert') return 'surprised';
     if (this.t < this.happyUntil) return 'happy';
     if (this.motion.sleeping) return 'sleepy';
     return MOOD_FACES[this.motion.mood] || 'idle';
