@@ -1,4 +1,4 @@
-const { app, BrowserWindow, ipcMain, globalShortcut, Menu, safeStorage, screen, session, shell } = require('electron');
+const { app, BrowserWindow, ipcMain, globalShortcut, Menu, safeStorage, screen, session, shell, clipboard, desktopCapturer, nativeImage } = require('electron');
 const path = require('path');
 const fs = require('fs');
 const os = require('os');
@@ -31,17 +31,324 @@ const ORB_SIZE = { width: 200, height: 230 };
 const ANCHOR = { x: 100, y: 84 }; // robot centre inside the orb window
 let brain = null;
 
+// Hermes bridge WebSocket client
+const BRIDGE_URL = 'ws://127.0.0.1:8765';
+let bridgeWs = null;
+let bridgeReconnectTimer = null;
+let bridgeSessionId = 0;
+
+function connectBridge() {
+  console.log('[Orbit] connectBridge called');
+  if (bridgeWs?.readyState === WebSocket.OPEN) return;
+  try {
+    console.log('[Orbit] Creating WebSocket connection to:', BRIDGE_URL);
+    bridgeWs = new WebSocket(BRIDGE_URL);
+    bridgeWs.onopen = () => {
+      console.log('[Orbit] Connected to Hermes');
+      bridgeWs.send(JSON.stringify({ type: 'status', connected: true, version: '1.0' }));
+      if (bridgeReconnectTimer) { clearInterval(bridgeReconnectTimer); bridgeReconnectTimer = null; }
+    };
+    bridgeWs.onmessage = (ev) => handleBridgeMessage(ev.data);
+    bridgeWs.onclose = () => {
+      console.log('[Orbit] Disconnected, will retry...');
+      bridgeWs = null;
+      if (!bridgeReconnectTimer) bridgeReconnectTimer = setInterval(connectBridge, 3000);
+    };
+    bridgeWs.onerror = (e) => console.error('[Orbit] Error:', e.message);
+  } catch (e) {
+    console.error('[Orbit] Connection failed:', e.message);
+    if (!bridgeReconnectTimer) bridgeReconnectTimer = setInterval(connectBridge, 3000);
+  }
+}
+
+function handleBridgeMessage(data) {
+  let msg;
+  try { msg = JSON.parse(data); } catch { return; }
+  switch (msg.type) {
+    case 'hello':
+      console.log('[Bridge] Hello from Hermes:', msg);
+      break;
+    case 'puppet':
+      handlePuppet(msg);
+      break;
+    case 'reply':
+      orbWin?.webContents.send('hermes:reply', msg);
+      break;
+    case 'ping':
+      bridgeWs?.send(JSON.stringify({ type: 'pong', t: Date.now() }));
+      break;
+    default:
+      console.log('[Bridge] Unknown message:', msg.type);
+  }
+}
+
+function sendToBridge(obj) {
+  if (bridgeWs?.readyState === WebSocket.OPEN) {
+    bridgeWs.send(JSON.stringify(obj));
+  }
+}
+
+function handlePuppet(msg) {
+  try {
+    const { action, payload, requestId } = msg;
+    if (!orbWin || !brain) return;
+    console.log('[Puppet] Received:', action, payload, 'requestId:', requestId);
+    switch (action) {
+      case 'move':
+        orbWin.webContents.send('win:move', payload.dx || 0, payload.dy || 0);
+        break;
+      case 'color':
+        orbWin.webContents.send('hermes:setColor', payload.state, payload.hex);
+        break;
+      case 'sleep':
+        brain.sleepNow();
+        break;
+      case 'wake':
+        brain.interact();
+        break;
+      case 'speak':
+        orbWin.webContents.send('hermes:speak', payload.text);
+        break;
+      case 'bounce':
+        orbWin.webContents.send('hermes:bounce');
+        break;
+      case 'roam':
+        brain.setEnabled(payload.enabled !== false);
+        break;
+      case 'nyx:focusedWindow':
+        console.log('[Puppet] Calling nyxFocusedWindow...');
+        nyxFocusedWindow().then(r => {
+          console.log('[Puppet] focusedWindow result:', r);
+          sendToBridge({ type: 'nyx:result', action: 'focusedWindow', requestId, ...r });
+        }).catch(e => {
+          console.error('[Puppet] focusedWindow error:', e);
+          sendToBridge({ type: 'nyx:result', action: 'focusedWindow', requestId, ok: false, error: e.message });
+        });
+        break;
+      case 'nyx:listWindows':
+        nyxListWindows().then(r => {
+          console.log('[Puppet] listWindows result:', r);
+          sendToBridge({ type: 'nyx:result', action: 'listWindows', requestId, ...r });
+        }).catch(e => {
+          console.error('[Puppet] listWindows error:', e);
+          sendToBridge({ type: 'nyx:result', action: 'listWindows', requestId, ok: false, error: e.message });
+        });
+        break;
+      case 'nyx:screenshot':
+        nyxScreenshot(payload).then(r => {
+          console.log('[Puppet] screenshot result:', r?.ok, r?.error);
+          sendToBridge({ type: 'nyx:result', action: 'screenshot', requestId, ...r });
+        }).catch(e => {
+          console.error('[Puppet] screenshot error:', e);
+          sendToBridge({ type: 'nyx:result', action: 'screenshot', requestId, ok: false, error: e.message });
+        });
+        break;
+      case 'nyx:clipboard:read':
+        nyxClipboardRead(payload?.format).then(r => {
+          console.log('[Puppet] clipboard:read result:', r?.ok, r?.error);
+          sendToBridge({ type: 'nyx:result', action: 'clipboard:read', requestId, ...r });
+        }).catch(e => {
+          console.error('[Puppet] clipboard:read error:', e);
+          sendToBridge({ type: 'nyx:result', action: 'clipboard:read', requestId, ok: false, error: e.message });
+        });
+        break;
+      case 'nyx:clipboard:write':
+        nyxClipboardWrite(payload).then(r => {
+          console.log('[Puppet] clipboard:write result:', r);
+          sendToBridge({ type: 'nyx:result', action: 'clipboard:write', requestId, ...r });
+        }).catch(e => {
+          console.error('[Puppet] clipboard:write error:', e);
+          sendToBridge({ type: 'nyx:result', action: 'clipboard:write', requestId, ok: false, error: e.message });
+        });
+        break;
+      case 'nyx:system:vitals':
+        nyxSystemVitals().then(r => {
+          console.log('[Puppet] system:vitals result:', r?.ok, r?.error);
+          sendToBridge({ type: 'nyx:result', action: 'system:vitals', requestId, ...r });
+        }).catch(e => {
+          console.error('[Puppet] system:vitals error:', e);
+          sendToBridge({ type: 'nyx:result', action: 'system:vitals', requestId, ok: false, error: e.message });
+        });
+        break;
+      case 'nyx:focusWindow':
+        nyxFocusWindow(payload.windowId).then(r => {
+          console.log('[Puppet] focusWindow result:', r);
+          sendToBridge({ type: 'nyx:result', action: 'focusWindow', requestId, ...r });
+        }).catch(e => {
+          console.error('[Puppet] focusWindow error:', e);
+          sendToBridge({ type: 'nyx:result', action: 'focusWindow', requestId, ok: false, error: e.message });
+        });
+        break;
+      case 'nyx:ping':
+        try {
+          const result = { type: 'nyx:result', action: 'ping', requestId, ok: true, pong: true, timestamp: new Date().toISOString() };
+          console.log('[Puppet] Sending ping result:', JSON.stringify(result));
+          sendToBridge(result);
+          console.log('[Puppet] Ping response sent successfully');
+        } catch (e) {
+          console.error('[Puppet] Ping error:', e);
+        }
+        break;
+    }
+  } catch (e) {
+    console.error('[Puppet] Unhandled error:', e);
+    if (msg.requestId) {
+      sendToBridge({ type: 'nyx:result', action: msg.action, requestId: msg.requestId, ok: false, error: e.message });
+    }
+  }
+}
+
+// ---------- Nyx capabilities (direct main process calls) ----------
+
+async function nyxFocusedWindow() {
+  try {
+    const wins = BrowserWindow.getAllWindows();
+    const focused = wins.find(w => w.isFocused()) || wins[0];
+    if (!focused || focused.isDestroyed()) return { ok: false, error: 'No window' };
+    return {
+      ok: true,
+      title: focused.getTitle(),
+      bounds: focused.getBounds(),
+      isFocused: focused.isFocused(),
+      isVisible: focused.isVisible(),
+      isMinimized: focused.isMinimized(),
+      isMaximized: focused.isMaximized(),
+    };
+  } catch (e) {
+    return { ok: false, error: e.message };
+  }
+}
+
+async function nyxListWindows() {
+  try {
+    const wins = BrowserWindow.getAllWindows();
+    return {
+      ok: true,
+      windows: wins.filter(w => !w.isDestroyed()).map(w => ({
+        id: w.id,
+        title: w.getTitle(),
+        bounds: w.getBounds(),
+        isFocused: w.isFocused(),
+        isVisible: w.isVisible(),
+        isMinimized: w.isMinimized(),
+        isMaximized: w.isMaximized(),
+        webContentsId: w.webContents.id,
+      })),
+    };
+  } catch (e) {
+    return { ok: false, error: e.message };
+  }
+}
+
+async function nyxScreenshot(opts = {}) {
+  try {
+    const { windowId, format = 'png' } = opts;
+    let image;
+    if (windowId) {
+      const win = BrowserWindow.fromId(windowId);
+      if (!win || win.isDestroyed()) return { ok: false, error: 'Window not found' };
+      image = await win.capturePage();
+    } else {
+      const sources = await desktopCapturer.getSources({
+        types: ['screen'],
+        thumbnailSize: { width: 1920, height: 1080 },
+      });
+      if (!sources.length) return { ok: false, error: 'No screen source' };
+      image = sources[0].thumbnail;
+    }
+    const data = format === 'png' ? image.toPNG().toString('base64') : image.toJPEG(85).toString('base64');
+    return { ok: true, data, format, width: image.getSize().width, height: image.getSize().height };
+  } catch (e) {
+    return { ok: false, error: e.message };
+  }
+}
+
+async function nyxClipboardRead(format = 'text') {
+  try {
+    let data;
+    if (format === 'text') data = clipboard.readText();
+    else if (format === 'html') data = clipboard.readHTML();
+    else if (format === 'rtf') data = clipboard.readRTF();
+    else if (format === 'image') {
+      const img = clipboard.readImage();
+      data = img.isEmpty() ? null : img.toPNG().toString('base64');
+    } else data = clipboard.readText();
+    return { ok: true, data, format };
+  } catch (e) {
+    return { ok: false, error: e.message };
+  }
+}
+
+async function nyxClipboardWrite(data) {
+  try {
+    if (data.image) {
+      const buf = Buffer.from(data.image, 'base64');
+      const img = nativeImage.createFromBuffer(buf);
+      clipboard.writeImage(img);
+    } else if (data.html) {
+      clipboard.writeHTML(data.html);
+    } else if (data.rtf) {
+      clipboard.writeRTF(data.rtf);
+    } else if (data.text) {
+      clipboard.writeText(data.text);
+    }
+    return { ok: true };
+  } catch (e) {
+    return { ok: false, error: e.message };
+  }
+}
+
+async function nyxSystemVitals() {
+  try {
+    const os = require('os');
+    const cpu = os.cpus();
+    const totalMem = os.totalmem();
+    const freeMem = os.freemem();
+    const usedMem = totalMem - freeMem;
+    let battery = null;
+    try {
+      const { execSync } = require('child_process');
+      const out = execSync('powershell -Command "Get-CimInstance Win32_Battery | Select-Object EstimatedChargeRemaining,EstimatedRunTime | ConvertTo-Json"', { encoding: 'utf8' });
+      const batteryData = JSON.parse(out);
+      battery = { percent: batteryData.EstimatedChargeRemaining, minutesRemaining: batteryData.EstimatedRunTime };
+    } catch {}
+    return {
+      ok: true,
+      cpu: { cores: cpu.length, model: cpu[0]?.model, load: cpu.map(c => c.times) },
+      memory: { total: totalMem, used: usedMem, free: freeMem, percent: Math.round(usedMem / totalMem * 100) },
+      battery,
+      platform: os.platform(),
+      arch: os.arch(),
+      uptime: os.uptime(),
+    };
+  } catch (e) {
+    return { ok: false, error: e.message };
+  }
+}
+
+async function nyxFocusWindow(windowId) {
+  try {
+    const win = BrowserWindow.fromId(windowId);
+    if (!win || win.isDestroyed()) return { ok: false, error: 'Window not found' };
+    if (win.isMinimized()) win.restore();
+    win.focus();
+    return { ok: true };
+  } catch (e) {
+    return { ok: false, error: e.message };
+  }
+}
+
 const DEFAULTS = {
   apiKey: '',
   model: 'gemini-3.8-live',
   voice: 'Puck',
-  language: 'auto', // main language: 'auto' or a code from renderer/languages.js
-  language2: '', // optional second language the user also speaks
-  micLabel: '', // '' = Windows default
-  speakerLabel: '', // '' = Windows default
+  language: 'auto',
+  language2: '',
+  micLabel: '',
+  speakerLabel: '',
   hotkey: 'Control+Space',
-  roam: true, // fly around the screen on its own
-  detectApps: true, // let voice open any app from the Start menu (list stays on this PC)
+  roam: true,
+  detectApps: true,
   skin: 'metallic',
   // Watch AI coding agents (see agent-watch.js): alerts, and approve buttons where the agent allows.
   watchClaude: false,
@@ -227,6 +534,22 @@ ipcMain.handle('action:run', (_e, name, args) => {
   const result = actions.run(name, args);
   appendLog('action', `${name} ${JSON.stringify(args)} → ${JSON.stringify(result)}`);
   return result;
+});
+
+// Nyx capabilities IPC handlers
+ipcMain.handle('nyx:focusedWindow', async () => nyxFocusedWindow());
+ipcMain.handle('nyx:listWindows', async () => nyxListWindows());
+ipcMain.handle('nyx:screenshot', async (_e, opts) => nyxScreenshot(opts));
+ipcMain.handle('nyx:clipboard:read', async (_e, format) => nyxClipboardRead(format));
+ipcMain.handle('nyx:clipboard:write', async (_e, data) => nyxClipboardWrite(data));
+ipcMain.handle('nyx:system:vitals', async () => nyxSystemVitals());
+ipcMain.handle('nyx:focusWindow', async (_e, windowId) => nyxFocusWindow(windowId));
+
+// Chat via Hermes bridge (forward to bridge)
+ipcMain.on('chat', (_e, msg) => {
+  if (bridgeWs?.readyState === WebSocket.OPEN) {
+    bridgeWs.send(JSON.stringify({ type: 'chat', ...msg }));
+  }
 });
 
 // Installed-app detection runs in the background (Get-StartApps takes a few seconds).
@@ -673,6 +996,9 @@ if (!app.requestSingleInstanceLock()) {
     registerHotkey(cfg.hotkey);
     syncListener(); // hooks were installed when each agent was turned on
     if (!cfg.apiKey) openSettings();
+
+    // Connect to Hermes bridge
+    connectBridge();
   });
 
   app.on('will-quit', () => {

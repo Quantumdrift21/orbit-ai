@@ -469,3 +469,20 @@ window.orbit.onConfigChanged(async () => {
 });
 
 setState('idle');
+
+// ---------- Nyx bridge: spoken replies + puppet visuals ----------
+function nyxSpeak(text) {
+  const u = new SpeechSynthesisUtterance(text);
+  u.rate = 1.0;
+  speechSynthesis.speak(u);
+}
+
+window.orbit.onHermesReply?.((msg) => {
+  if (msg.text && msg.text !== '[NYX_PENDING]' && msg.text.trim()) nyxSpeak(msg.text.trim());
+});
+
+window.addEventListener('message', (e) => {
+  if (e.data?.type === 'hermes:speak' && e.data.text) nyxSpeak(e.data.text);
+  if (e.data?.type === 'hermes:setColor') orb.setStateColor(e.data.state, e.data.hex);
+  if (e.data?.type === 'hermes:bounce') orb.bounce();
+});

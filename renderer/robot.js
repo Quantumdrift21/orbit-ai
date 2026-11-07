@@ -5,11 +5,11 @@
 import * as THREE from './vendor/three.module.min.js';
 
 const STATE_COLORS = {
-  idle: '#38d9ff',
-  listening: '#3dffa8',
-  thinking: '#a77bff',
-  speaking: '#ffcf9e',
-  error: '#ff4d5e',
+  idle: '#ff2e88',      // hot pink
+  listening: '#00ffff', // cyan
+  thinking: '#ff00ff',  // magenta
+  speaking: '#ff6b00',  // orange
+  error: '#ff0044',     // red-pink
 };
 
 // Moods (from the brain, see mood.js): resting face, idle glow tint and how fast it bobs.
@@ -196,26 +196,27 @@ const SKIN_TEXTURES = { brushed: brushedRoughness, detail: panelDetail, leatherB
 // Every skin is a few settings on the two shared materials: the shell (body, dials, arm-orbs)
 // and the trim (bezel, antennas, rods). Strings name a texture above; anything unset uses BASE.
 const BASE_SHELL = {
-  color: 0xd2d6dd,
+  color: 0x1a1c20,      // dark gunmetal
   map: null,
   metalness: 1,
-  roughness: 0.42,
+  roughness: 0.15,      // very shiny
   roughnessMap: 'brushed',
   bumpMap: 'detail',
   bumpScale: 1.2,
-  clearcoat: 0.35,
-  clearcoatRoughness: 0.25,
+  clearcoat: 0.5,
+  clearcoatRoughness: 0.1,
   sheen: 0,
-  iridescence: 0,
-  envMapIntensity: 1,
+  iridescence: 0.3,
+  envMapIntensity: 1.2,
 };
 const BASE_TRIM = {
-  color: 0x2b2e34,
-  metalness: 0.85,
-  roughness: 0.32,
-  clearcoat: 0.4,
-  clearcoatRoughness: 0.3,
-  iridescence: 0,
+  color: 0x0a0b0d,      // almost black
+  metalness: 1,
+  roughness: 0.1,
+  clearcoat: 0.6,
+  clearcoatRoughness: 0.08,
+  iridescence: 0.5,
+  iridescenceIOR: 2.0,
 };
 const SKINS = {
   metallic: { shell: {}, trim: {} },
@@ -421,11 +422,18 @@ export class Robot {
 
     const key = new THREE.DirectionalLight(0xffffff, 1.4);
     key.position.set(-3, 4, 5);
-    const rim = new THREE.DirectionalLight(0xbfe9ff, 1.2);
-    rim.position.set(3, 2, -4);
+    
+    // Cyberpunk rim lights - magenta and cyan
+    const rim1 = new THREE.DirectionalLight(0xff00ff, 1.8);
+    rim1.position.set(4, 1, -3);
+    const rim2 = new THREE.DirectionalLight(0x00ffff, 1.5);
+    rim2.position.set(-4, 1, -3);
+    const rim3 = new THREE.DirectionalLight(0xff2e88, 1.2);
+    rim3.position.set(0, -3, -4);
+    
     this.faceLight = new THREE.PointLight(this.accent, 1.2, 4, 2);
     this.faceLight.position.set(0, 0, 1.7);
-    this.scene.add(key, rim, this.faceLight);
+    this.scene.add(key, rim1, rim2, rim3, this.faceLight);
   }
 
   #buildRobot() {
@@ -441,7 +449,7 @@ export class Robot {
     this.glowMats = []; // everything tinted with the accent colour
     const glowMat = (intensity) => {
       const m = new THREE.MeshStandardMaterial({
-        color: 0x111111,
+        color: 0x080808,
         emissive: this.accent.clone(),
         emissiveIntensity: intensity,
       });
@@ -499,14 +507,14 @@ export class Robot {
     const screen = new THREE.Mesh(
       cap(1.022, fw, fh),
       new THREE.MeshPhysicalMaterial({
-        color: 0x04060a,
+        color: 0x000000,
         metalness: 0,
-        roughness: 0.1,
+        roughness: 0.05,
         clearcoat: 1,
-        clearcoatRoughness: 0.04,
+        clearcoatRoughness: 0.02,
         emissive: 0xffffff,
         emissiveMap: this.faceTex,
-        emissiveIntensity: 1.7,
+        emissiveIntensity: 2.0,
       }),
     );
     this.head.add(screen);

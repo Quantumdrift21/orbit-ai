@@ -25,4 +25,23 @@ contextBridge.exposeInMainWorld('orbit', {
   onMotion: (cb) => ipcRenderer.on('motion', (_e, m) => cb(m)),
   onToggle: (cb) => ipcRenderer.on('orb:toggle', () => cb()),
   onConfigChanged: (cb) => ipcRenderer.on('config:changed', () => cb()),
+
+  // Nyx capabilities
+  nyx: {
+    focusedWindow: () => ipcRenderer.invoke('nyx:focusedWindow'),
+    listWindows: () => ipcRenderer.invoke('nyx:listWindows'),
+    screenshot: (windowId) => ipcRenderer.invoke('nyx:screenshot', { windowId }),
+    clipboard: {
+      read: (format) => ipcRenderer.invoke('nyx:clipboard:read', format),
+      write: (data) => ipcRenderer.invoke('nyx:clipboard:write', data),
+    },
+    system: {
+      vitals: () => ipcRenderer.invoke('nyx:system:vitals'),
+    },
+    focusWindow: (windowId) => ipcRenderer.invoke('nyx:focusWindow', windowId),
+  },
+
+  // Chat via Hermes bridge
+  chat: (text, sessionId) => ipcRenderer.send('chat', { text, sessionId }),
+  onHermesReply: (cb) => ipcRenderer.on('hermes:reply', (_e, msg) => cb(msg)),
 });

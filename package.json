@@ -28,7 +28,7 @@
     "format:check": "prettier --check ."
   },
   "devDependencies": {
-    "electron": "^37.2.0",
+    "electron": "^37.10.3",
     "electron-builder": "^26.0.12",
     "prettier": "3.9.10"
   },
@@ -49,6 +49,7 @@
     }
   },
   "dependencies": {
-    "three": "^0.170.0"
+    "three": "^0.170.0",
+    "ws": "^8.22.1"
   }
 }

@@ -20,10 +20,10 @@ function daypart(d = new Date()) {
 // How lively Orbit is at each time of day (seconds / px per second; trick = chance of a stunt
 // when it arrives somewhere).
 const RHYTHM = {
-  morning: { journey: 0.6, speed: 230, rest: [4, 10], sleepAfter: 240, nap: [90, 240], trick: 0.35 },
-  afternoon: { journey: 0.45, speed: 190, rest: [6, 16], sleepAfter: 180, nap: [120, 360], trick: 0.25 },
-  evening: { journey: 0.3, speed: 150, rest: [8, 22], sleepAfter: 150, nap: [180, 480], trick: 0.15 },
-  night: { journey: 0.12, speed: 110, rest: [10, 30], sleepAfter: 60, nap: [900, 3600], trick: 0 },
+  morning: { journey: 0.9, speed: 500, rest: [2, 6], sleepAfter: 480, nap: [30, 120], trick: 0.6 },
+  afternoon: { journey: 0.7, speed: 450, rest: [3, 8], sleepAfter: 360, nap: [60, 180], trick: 0.5 },
+  evening: { journey: 0.5, speed: 350, rest: [4, 12], sleepAfter: 300, nap: [90, 240], trick: 0.4 },
+  night: { journey: 0.25, speed: 250, rest: [5, 15], sleepAfter: 120, nap: [180, 600], trick: 0.1 },
 };
 
 // Flying stunts (seconds). The robot page draws the body's spin from the progress we send it;
