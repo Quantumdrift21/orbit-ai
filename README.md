@@ -157,7 +157,7 @@ Change it from right-click → **Skin**, in Settings, or just ask: "wear your ve
 
 ## Download
 
-Get the latest build from [Releases](https://github.com/Quantumdrift21/orbit-ai/releases/latest):
+Get the latest build from [Releases](https://github.com/Quantumdrift21/orbit-ai/releases):
 
 - **`Orbit AI Setup <version>.exe`**: installer, adds Orbit to the Start menu.
 - **`Orbit AI <version>.exe`**: portable, just double-click it. Nothing to install.
