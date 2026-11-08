@@ -15,6 +15,35 @@ It speaks **99 languages** (including English and Tamil), opens any app on your 
 
 > Free and open source (MIT). You bring your own free Gemini API key.
 
+## See it in action
+
+<p align="center">
+  <img src="docs/aerostrike.png" alt="AeroStrike, the winged combat mech Orbit transforms into" width="420" />
+</p>
+
+| Transforms into AeroStrike                                                   | Human-like stunts                                                       |
+| ---------------------------------------------------------------------------- | ----------------------------------------------------------------------- |
+| ![Orbit unfolding part by part into AeroStrike and back](docs/transform.gif) | ![Backflip, skater spin, superhero loop and side flip](docs/stunts.gif) |
+| **Defence mode**                                                             | **Flies into the screen and back**                                      |
+| ![Blocking, kicking and firing the laser at mouse clicks](docs/defence.gif)  | ![AeroStrike flying into the distance and up close](docs/depth.gif)     |
+
+**Dodges your mouse:** every joint swings and settles on its own, with a startle flinch.
+
+![AeroStrike dodging a fast mouse swipe](docs/dodge.gif)
+
+**Polite flying:** it moves off the text you're typing.
+
+![Orbit flying out of the way while text is typed](docs/polite.gif)
+
+**Up close:** human hands with jointed fingers, twin jet engines with real flame physics, layered wings.
+
+![Close-ups of the hands, jet engines and wings](docs/details.png)
+
+**Watch your AI agents:** approve, deny or answer from a bubble beside the robot, or open the chat window with the
+agent's transcript.
+
+![The agent chat window and subtitle bubbles with Allow, Deny and answer buttons](docs/agent-chat.png)
+
 ## Features
 
 ![Orbit's moods: idle, listening, speaking and napping](docs/screenshot.png)
