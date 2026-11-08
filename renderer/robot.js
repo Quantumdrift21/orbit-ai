@@ -6,6 +6,10 @@ import * as THREE from './vendor/three.module.min.js';
 import { buildMech } from './mech.js';
 import { tuckedFlip, superheroLoop } from './flip.js';
 import { defencePose, DEFENCE_SECS } from './defend.js';
+import { createJet } from './jet.js';
+import { spool, thrustDemand } from './jetPhysics.js';
+import { attitude, depthScale } from './heading.js';
+import { createJoints, kick, step, flinch } from './joints.js';
 
 /** AeroStrike's pose for a running stunt: its body motion here, its limbs in mech.js. */
 const stuntPose = (tr) =>
@@ -347,6 +351,8 @@ export class Robot {
     this.blink = { next: rand(1.5, 4), until: 0 };
     this.squash = { x: 0, v: 0 };
     this.arm = { x: 0, v: 0 };
+    this.joints = createJoints(); // every joint's own follow-through spring (joints.js)
+    this.dodgeAt = -10;
     this.happyUntil = 0;
     this.errorAt = -10;
     this.motion = { vx: 0, vy: 0, sleeping: false, event: null };
@@ -388,7 +394,15 @@ export class Robot {
    */
   setMotion(m) {
     if (m.event === 'wake' && this.motion.event !== 'wake') this.happyUntil = this.t + 1.6;
-    if (m.event === 'dodge' && this.motion.event !== 'dodge') this.squash.v -= 1.5;
+    if (m.event === 'dodge' && this.motion.event !== 'dodge') {
+      this.squash.v -= 1.5;
+      this.dodgeAt = this.t; // startle reflex (joints.js flinch)
+    }
+    // a change of speed kicks every joint, turned into the robot's own frame: flying side-on, a jerk
+    // across the screen swings the limbs forward or back; facing you, it swings them sideways
+    const dvx = (m.vx ?? 0) - (this.motion.vx ?? 0);
+    const yaw = this.attitude?.yaw ?? 0;
+    if (dvx) kick(this.joints, dvx * Math.cos(yaw), dvx * Math.sin(yaw));
     this.motion = m;
   }
 
@@ -495,7 +509,12 @@ export class Robot {
     this.root.scale.setScalar(0.6); // miniature
     this.head = new THREE.Group(); // looks, leans, breathes
     this.root.add(this.head);
-    this.scene.add(this.root);
+    // turns the whole robot toward where it flies and scales it with depth (heading.js)
+    this.flight = new THREE.Group();
+    this.flight.rotation.order = 'YXZ'; // heading, then pitch, then bank — like a flyer
+    this.flight.add(this.root);
+    this.scene.add(this.flight);
+    this.attitude = { yaw: 0, pitch: 0, roll: 0 };
 
     // halo behind the body
     this.halo = sprite(3.6, 0.12);
@@ -613,13 +632,16 @@ export class Robot {
       this.beads.push(bead);
       this.head.add(bead);
     }
-    this.thruster = sprite(1.2, 0.4);
-    this.thruster.position.set(0, -1.22, 0.15);
-    this.head.add(this.thruster);
+    // a small jet engine under Orbit (renderer/jet.js); its exhaust lives in the scene so it trails
+    this.jet = createJet({ radius: 0.2, length: 1.6, particles: 90, exhaust: { speed: 4, size: 0.16 } });
+    this.jet.flame.position.set(0, -1.18, 0);
+    this.head.add(this.jet.flame);
+    this.scene.add(this.jet.smoke);
 
     // AeroStrike, folded away until Orbit transforms (see mech.js)
     this.mech = buildMech({ shell: silver, trim: graphite, glowMat, sprite });
     this.root.add(this.mech.group);
+    for (const j of this.mech.jets) this.scene.add(j.smoke);
 
     // red laser from the chest core: a white-hot core line inside a red glow, a flare at the core
     // and a splash where it hits. Normal blending (writes alpha) so it shows over the desktop.
@@ -893,7 +915,7 @@ export class Robot {
 
   // ----- animation loop -----
   // The loop always reschedules itself first, so one bad frame can never freeze the robot.
-  // Frame cap: full 60 fps only while flying or talking; 30 when idle, 12 asleep (saves CPU/battery).
+  // Frame cap: full 60 fps only while flying, talking or limbs swing; 30 when idle, 12 asleep (saves CPU/battery).
   #frame = (now) => {
     requestAnimationFrame(this.#frame);
     if (now < this.nextFrame) return;
@@ -905,7 +927,8 @@ export class Robot {
             m.trick ||
             this.def || // defence moves are fast: springs and laser flicker need every frame
             (m.form > 0 && m.form < 1) ||
-            Math.abs(m.vx) + Math.abs(m.vy) > 40
+            Math.abs(m.vx) + Math.abs(m.vy) > 40 ||
+            Math.abs(this.joints.shoulderR.vx) + Math.abs(this.joints.wingR.vx) > 0.05 // limbs still swinging
           ? 60
           : 30;
     this.nextFrame = now + 1000 / fps - 4;
@@ -1010,12 +1033,11 @@ export class Robot {
     // as a chest core it barely turns: the mech's own head does the looking
     this.head.rotation.y = lerp(this.head.rotation.y, this.look.x * 0.55 * (1 - 0.8 * form), 0.1) + shake;
     // flight: bank into turns, dip forward with speed
-    const bank = clamp(-mv.vx / 650, -0.45, 0.45);
     const dive = clamp(mv.vy / 1100, -0.2, 0.25) + Math.min(0.15, speed / 1800);
     this.head.rotation.x = lerp(this.head.rotation.x, this.look.y * 0.32 + lean + nod + dive, 0.1);
     this.head.rotation.z = lerp(
       this.head.rotation.z,
-      (st === 'thinking' ? 0.14 : 0) + Math.sin(t * 0.5) * 0.04 + bank * (1 - form),
+      (st === 'thinking' ? 0.14 : 0) + Math.sin(t * 0.5) * 0.04, // banking is the flight group's job (heading.js)
       0.08,
     );
     // bob: a running phase, so a mood change alters the speed without a jump
@@ -1051,7 +1073,19 @@ export class Robot {
     } else {
       this.root.rotation.set(0, 0, 0);
     }
-    this.root.rotation.z += bank * form * 0.6; // the whole mech banks into turns
+    // follow-through: the body sways from its own spring, every limb lags on its own (joints.js)
+    const J = step(this.joints, dt);
+    const startle = flinch(this.t - this.dodgeAt);
+    this.root.rotation.z -= J.spine.x;
+    this.root.rotation.x += J.spine.z + 0.12 * startle * (1 - form);
+    // flight attitude: face where it flies, all the way round (its back when AeroStrike flies into the
+    // screen), bank into turns, lean into speed; face you for stunts, defence, talking and naps.
+    // AeroStrike also flies into and out of the screen: perspective scale from the brain's depth.
+    const still = !!tr || !!def || this.guardS > 0.5 || st !== 'idle' || sleepy;
+    this.attitude = attitude(this.attitude, mv, dt, { lean: form, still });
+    this.flight.rotation.set(this.attitude.pitch, this.attitude.yaw, this.attitude.roll);
+    this.flight.scale.setScalar(depthScale(mv.depth)); // the brain only flies AeroStrike in depth
+    this.renderer.toneMappingExposure = 1.05 - 0.22 * Math.min(1, Math.max(0, mv.depth ?? 0)); // distance haze
     // defence: a bladed stance on guard; in a move it turns to face the click, leans away from
     // the swinging leg / the hit, is pushed back by the impact and drops its weight to brace
     if (def || this.guardS > 0.001) {
@@ -1074,8 +1108,11 @@ export class Robot {
       const side = arm.userData.side;
       const lift = st === 'listening' ? 0.25 : st === 'speaking' ? lvl * 0.35 : 0;
       const trail = clamp(mv.vx / 900, -0.5, 0.5) + clamp(-mv.vy / 1200, -0.3, 0.3) * side;
-      arm.rotation.z = -side * (0.42 - lift + Math.sin(t * 1.3 + side) * 0.05) + a.x * 0.6 + trail;
-      arm.rotation.y = Math.sin(t * 0.9 + side * 2) * 0.12;
+      const sh = J[side < 0 ? 'shoulderR' : 'shoulderL'];
+      // its own lag on top; a startled Orbit throws its arms up
+      arm.rotation.z =
+        -side * (0.42 - lift - 0.9 * startle + Math.sin(t * 1.3 + side) * 0.05) + a.x * 0.6 + trail + sh.x * 0.5;
+      arm.rotation.y = Math.sin(t * 0.9 + side * 2) * 0.12 - side * sh.z;
     }
 
     // antennas perk up when listening, wobble with bounce/drag
@@ -1087,7 +1124,10 @@ export class Robot {
       const home = ant.userData.home;
       ant.position.set(lerp(home.x, side * 0.3, antUp), lerp(home.y, 2.4, antUp), lerp(home.z, -0.05, antUp));
       const perk = st === 'listening' ? 0.12 : sleepy ? -0.2 : 0;
-      ant.rotation.z = -side * (0.34 - perk) + s.x * side * 0.6 + a.x * 0.25 + Math.sin(t * 2.1 + side) * 0.03;
+      const aj = J[side < 0 ? 'antR' : 'antL'];
+      ant.rotation.z =
+        -side * (0.34 - perk + 0.3 * startle) + s.x * side * 0.6 + a.x * 0.25 + Math.sin(t * 2.1 + side) * 0.03 - aj.x;
+      ant.rotation.x = aj.z - 0.4 * startle; // swept back by the flinch
     }
 
     // ear dials spin (fast while thinking)
@@ -1101,12 +1141,6 @@ export class Robot {
       b.material.emissiveIntensity =
         b.material.userData.base * (0.45 + 0.75 * Math.max(0, Math.sin(t * 3 - i * 0.55))) * pulse;
     });
-    this.thruster.material.opacity =
-      (0.3 + breath * 0.15 + lvl * 0.25) *
-      (sleepy ? 0.5 : 1) *
-      (1 + Math.min(1.5, speed / 200) + (tr ? 1.2 : 0)) *
-      (1 - form); // the mech flies on its backpack thrusters instead
-
     // AeroStrike parts unfold, then live on top of that pose
     this.mech.setMorph(form);
     this.mech.update(t, dt, {
@@ -1118,6 +1152,8 @@ export class Robot {
       pose,
       guard: this.guardS,
       def,
+      joints: J,
+      flinch: startle,
     });
 
     // camera: Orbit keeps its on-screen size in any window; the mech is framed whole as it grows
@@ -1126,6 +1162,25 @@ export class Robot {
     const camY = lerp(-0.55 * (h / 230), -1.0, zoom);
     this.camera.position.set(0, camY, lerp(7.6 * (h / 230), 14, zoom));
     this.camera.lookAt(0, camY, 0);
+
+    // jet engines (jetPhysics.js): the throttle spools toward what the flight needs; the exhaust is
+    // moved back by the window's own motion, so it stays on the desktop and trails behind
+    const fovT = Math.tan((this.camera.fov * Math.PI) / 360);
+    const perPx = (2 * this.camera.position.z * fovT) / h; // world units per screen px at the robot
+    const lift = (pose?.lift ?? 0) + (tr && !pose ? 0.5 * Math.sin(Math.PI * tr.p) : 0);
+    this.engine = spool(
+      this.engine ?? { throttle: 0.3, pop: 0 },
+      thrustDemand({ speed, vy: mv.vy, lift, recoil: def?.recoil ?? 0, idle: sleepy ? 0.15 : 0.3 }),
+      dt,
+    );
+    const engine = {
+      ...this.engine,
+      shift: [-(mv.vx || 0) * dt * perPx, (mv.vy || 0) * dt * perPx, 0],
+      pxScale: (h * this.renderer.getPixelRatio()) / (2 * fovT),
+    };
+    this.jet.update(dt, t, { ...engine, opacity: (1 - form) * (sleepy ? 0.6 : 1) }); // the mech uses its own
+    const packOut = clamp((form - 0.6) / 0.3, 0, 1); // backpack deployed
+    for (const j of this.mech.jets) j.update(dt, t, { ...engine, opacity: packOut });
     this.halo.material.opacity = (0.09 + breath * 0.05 + lvl * 0.1) * (sleepy ? 0.5 : 1);
 
     // blinking (with occasional double-blink)

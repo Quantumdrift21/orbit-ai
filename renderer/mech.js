@@ -5,6 +5,7 @@
 import * as THREE from './vendor/three.module.min.js';
 import { GLTFLoader } from './vendor/GLTFLoader.js';
 import model from './models/aerostrike.glb.js';
+import { createJet } from './jet.js';
 
 const TAU = Math.PI * 2;
 const clamp01 = (v) => Math.max(0, Math.min(1, v));
@@ -13,6 +14,17 @@ const lerp = (a, b, t) => a + (b - a) * t;
 const easeOutBack = (t) => 1 + 2.2 * (t - 1) ** 3 + 1.2 * (t - 1) ** 2;
 // Legs are drawn 1.35x the size they're modelled at, so they're in proportion to the big upper body.
 const LEG_SCALE = 1.35;
+// wing feathers: [length, width, fan-out angle]; tools/aerostrike.py models the same six (<wing>F0..F5)
+const FEATHERS = [
+  [2.6, 0.44, -0.3],
+  [2.4, 0.42, -0.45],
+  [2.2, 0.4, -0.6],
+  [2.0, 0.38, -0.74],
+  [1.8, 0.36, -0.88],
+  [1.6, 0.34, -1.02],
+];
+// finger curl per phalanx (knuckle, middle, tip) at a full fist; the little finger curls a bit more
+const CURL = [1.35, 1.7, 1.1];
 
 /** Rounded, bevelled hard-surface panel centred on its origin. */
 function panel(w, h, d, r = 0.08) {
@@ -218,7 +230,7 @@ export function buildMech(kit) {
     part(sh, [0.42, 0.66], { p: [side * 0.9, 0.3, 0], s: 0.3, r: [0, 0, side * 1.6] });
   }
 
-  // ---------- arms: swing down from the shoulders and extend; clawed hands ----------
+  // ---------- arms: swing down from the shoulders and extend; human hands ----------
   const arms = [];
   const joints = []; // elbow and knee groups, filled from the model like the parts
   for (const side of [-1, 1]) {
@@ -232,21 +244,24 @@ export function buildMech(kit) {
     lower.userData.keep = true; // survives the arm being filled from the model
     const fore = mesh(panel(0.66, 1.05, 0.64, 0.18), shell, 0, -0.57, 0.02);
     fore.add(mesh(panel(0.07, 0.62, 0.06, 0.03), glowMat(1.8), side * 0.34, 0, 0));
-    const hand = new THREE.Group();
-    hand.position.set(0, -1.2, 0.04);
-    hand.add(mesh(panel(0.42, 0.3, 0.34, 0.08), trim));
-    for (let i = 0; i < 3; i++) {
-      const claw = mesh(new THREE.ConeGeometry(0.06, 0.34, 12), shell, (i - 1) * 0.13, -0.3, 0.06);
-      claw.rotation.x = Math.PI + 0.25; // pointing down
-      hand.add(claw);
+    // the hand bends at the wrist on its own; the model fills it as hand<R|L> with jointed fingers
+    const hand = pivot(side < 0 ? 'handR' : 'handL', 0, -1.12, 0.04);
+    hand.userData.keep = true; // survives the forearm being filled from the model
+    hand.add(mesh(panel(0.42, 0.3, 0.3, 0.1), trim, 0, -0.12, 0));
+    for (let i = 0; i < 4; i++) {
+      const f = mesh(new THREE.CapsuleGeometry(0.045, 0.24 - Math.abs(i - 1.5) * 0.04, 6, 12), shell);
+      f.position.set(side * (0.15 - i * 0.1), -0.42, 0.02);
+      hand.add(f);
     }
-    const thumb = mesh(new THREE.ConeGeometry(0.06, 0.28, 12), shell, -side * 0.24, -0.18, 0.08);
-    thumb.rotation.z = Math.PI - side * 0.7;
+    const thumb = mesh(new THREE.CapsuleGeometry(0.05, 0.2, 6, 12), shell, side * 0.25, -0.24, 0.08);
+    thumb.rotation.z = side * 0.6;
     hand.add(thumb);
+    hand.userData.fingers = []; // [finger][phalanx], from the model (index, middle, ring, little, thumb)
     lower.add(fore, hand);
     arm.add(upper, elbow, lower);
     arm.userData.fore = lower;
-    joints.push(lower);
+    arm.userData.hand = hand;
+    joints.push(lower, hand);
     arm.rotation.z = side * 0.08;
     arms.push(arm);
     part(arm, [0.34, 0.62], { p: [side * 1.2, 0.6, 0], r: [0, 0, side * 2.6], s: 0.25 });
@@ -299,17 +314,18 @@ export function buildMech(kit) {
   pack.name = 'pack';
   pack.position.set(0, 0.05, -1.02);
   pack.add(mesh(panel(1.25, 1.3, 0.62, 0.2), trim));
-  const thrusters = [];
+  const jets = []; // twin jet engines (renderer/jet.js): flame at each nozzle, exhaust in the scene
   for (const side of [-1, 1]) {
     const nozzle = mesh(cyl(0.2, 0.26, 0.42), shell, side * 0.36, -0.82, -0.08);
     const ring = mesh(new THREE.TorusGeometry(0.2, 0.025, 8, 32), glowMat(2.6), 0, -0.21, 0);
     ring.rotation.x = Math.PI / 2;
     nozzle.add(ring);
-    const jet = sprite(0.9, 0.5);
-    jet.userData.keep = true;
-    jet.position.set(side * 0.36, -1.15, -0.08);
-    thrusters.push(jet);
-    pack.add(nozzle, jet);
+    const jet = createJet({ radius: 0.22, length: 2.4, exhaust: { speed: 5.5, size: 0.24 } });
+    jet.flame.userData.keep = true; // survives the Blender model swap
+    jet.flame.position.set(side * 0.36, -1.03, -0.08); // nozzle exit
+    jet.flame.rotation.z = side * 0.42; // splayed outward: the plumes clear the legs
+    jets.push(jet);
+    pack.add(nozzle, jet.flame);
   }
   part(pack, [0.5, 0.74], { p: [0, 0, -0.4], r: [0.9, 0, 0] });
 
@@ -327,12 +343,9 @@ export function buildMech(kit) {
     const main = mesh(blade(3.1, 0.6, 0.12), shell);
     main.add(mesh(panel(2.0, 0.05, 0.04, 0.02), glowMat(1.8), 1.25, 0.1, 0.07));
     const feathers = [];
-    [
-      [2.6, 0.46, -0.34],
-      [2.2, 0.42, -0.68],
-      [1.8, 0.38, -1.02],
-    ].forEach(([len, w, open], i) => {
-      const f = mesh(blade(len, w, 0.08), i === 1 ? trim : shell, 0.12, -0.1, -0.05 - i * 0.04);
+    // six feathers in two overlapping layers, fanning over the same span the wing always had
+    FEATHERS.forEach(([len, w, open], i) => {
+      const f = mesh(blade(len, w, 0.07), i % 2 ? trim : shell, 0.12, -0.1, -0.05 - (i % 2) * 0.07 - i * 0.012);
       f.userData.open = open;
       feathers.push(f);
       wing.add(f);
@@ -370,7 +383,22 @@ export function buildMech(kit) {
    * Idle life, added on top of the pose setMorph just set (call it after setMorph each frame):
    * turbines spin, the head looks around (look is already smoothed), limbs trail when flying.
    */
-  function update(t, dt, { lookX = 0, lookY = 0, vx = 0, vy = 0, level = 0, pose = null, guard = 0, def = null } = {}) {
+  function update(
+    t,
+    dt,
+    {
+      lookX = 0,
+      lookY = 0,
+      vx = 0,
+      vy = 0,
+      level = 0,
+      pose = null,
+      guard = 0,
+      def = null,
+      joints: J = null,
+      flinch = 0,
+    } = {},
+  ) {
     if (!group.visible) return;
     for (const sh of turbines) sh.userData.fan.rotation.x += dt * (4 + Math.hypot(vx, vy) / 60);
     head.rotation.y += lookX * 0.6;
@@ -412,8 +440,74 @@ export function buildMech(kit) {
     head.rotation.x += (ball ? 0.4 : 0) * tuck - 0.3 * stretch;
     for (const w of wings) w.rotation.x -= 0.5 * tuck; // wings sweep back, out of the way
     defend(t, guard, def);
-    const speed = Math.min(1.5, Math.hypot(vx, vy) / 200);
-    for (const j of thrusters) j.material.opacity = 0.35 + speed * 0.45 + Math.sin(t * 30) * 0.05;
+    follow(J, flinch);
+    // hands: relaxed and a little curled at rest (like ours), fists on guard, in a block, wrapping the
+    // shins in a tuck and leading a superhero loop; open in the laser brace; a quick clench on a flinch
+    const d = def ?? {};
+    arms.forEach((a, i) => {
+      const near = d.side < 0 ? i === 0 : i === 1;
+      const fist = Math.max(guard, (near ? d.guard : d.guardOff) ?? 0, ball ? tuck : 0, stretch, flinch * 0.8);
+      const grip = clamp01(0.28 + 0.72 * fist - 0.3 * (d.open ?? 0)) + Math.sin(t * 0.7 + i * 2) * 0.03;
+      a.userData.hand.userData.fingers.forEach((segs, f) => {
+        const curl = f === 4 ? grip * 0.55 : grip * (1 + 0.06 * f);
+        segs.forEach((o, k) =>
+          o.quaternion.copy(o.userData.rest).multiply(bend.setFromAxisAngle(X_AXIS, -curl * CURL[k])),
+        );
+      });
+    });
+  }
+
+  const bend = new THREE.Quaternion();
+  const X_AXIS = new THREE.Vector3(1, 0, 0);
+  /**
+   * Follow-through (renderer/joints.js gives each joint's lag): every limb segment moves on its own,
+   * relative to the one it hangs from, so a dodge ripples down the body instead of moving it stiffly.
+   * Elbows and knees only bend the way ours do. `flinch` 0..1 is the startle reflex of a dodge:
+   * hands come up in front of the face, knees tuck, chin drops.
+   */
+  function follow(J, flinch) {
+    if (!J) return;
+    const sp = J.spine; // robot.js leans the whole body with it; limbs here move relative to that
+    head.rotation.z -= J.neck.x;
+    head.rotation.x += J.neck.z + 0.3 * flinch;
+    arms.forEach((a, i) => {
+      const s = i === 0 ? 'R' : 'L';
+      const side = i === 0 ? -1 : 1;
+      const sh = J['shoulder' + s];
+      const el = J['elbow' + s];
+      const wr = J['wrist' + s];
+      a.rotation.z += sh.x + sp.x - side * 0.25 * flinch;
+      a.rotation.x -= sh.z + sp.z + 1.1 * flinch;
+      const fore = a.userData.fore;
+      fore.rotation.x -= Math.max(-0.05, el.z - sh.z) + 0.3 * Math.abs(el.x - sh.x) + 1.5 * flinch;
+      fore.rotation.z = (el.x - sh.x) * 0.4;
+      const hand = a.userData.hand;
+      hand.rotation.x = -(wr.z - el.z) - 0.2 * flinch;
+      hand.rotation.z = wr.x - el.x;
+    });
+    legs.forEach((l, i) => {
+      const s = i === 0 ? 'R' : 'L';
+      const hp = J['hip' + s];
+      const kn = J['knee' + s];
+      l.rotation.z += hp.x + sp.x;
+      l.rotation.x -= hp.z + sp.z + 0.55 * flinch;
+      l.userData.shin.rotation.x += Math.max(-0.05, hp.z - kn.z) + 0.25 * Math.abs(kn.x - hp.x) + 0.9 * flinch;
+    });
+    wings.forEach((w, i) => {
+      const s = i === 0 ? 'R' : 'L';
+      const side = i === 0 ? -1 : 1;
+      const wg = J['wing' + s];
+      const tip = J['tip' + s];
+      w.rotation.x += wg.z - 0.3 * flinch; // flinch: wings fold in
+      w.rotation.z -= side * wg.x * 0.8;
+      // each layer of feathers lags a little more than the one in front of it: a ripple out to the tips
+      const n = w.userData.feathers.length;
+      w.userData.feathers.forEach((f, k) => {
+        const lag = (k + 1) / n;
+        f.rotation.z -= side * (tip.x - wg.x) * lag;
+        f.rotation.y = (tip.z - wg.z) * lag * 0.6;
+      });
+    });
   }
 
   /**
@@ -479,13 +573,21 @@ export function buildMech(kit) {
           obj.remove(...obj.children.filter((c) => !c.userData.keep));
           obj.add(...src.children);
           obj.userData.fan = obj.getObjectByName(obj.name + 'Fan') ?? obj.userData.fan;
-          // wings: the model's feathers (<name>F0..F2) take over, with the same fan-out angles
+          // wings: the model's feathers (<name>F0..F5) take over, with the same fan-out angles
           obj.userData.feathers = obj.userData.feathers?.map((old, i) => {
             const f = obj.getObjectByName(obj.name + 'F' + i);
             if (!f) return old;
             f.userData.open = old.userData.open;
             return f;
           });
+        }
+        // hands: phalanges hand<R|L>F<finger><joint> (0 = index … 3 = little, 4 = thumb), chained in the model
+        for (const a of arms) {
+          const hand = a.userData.hand;
+          hand.userData.fingers = [0, 1, 2, 3, 4]
+            .map((f) => [0, 1, 2].map((k) => hand.getObjectByName(`${hand.name}F${f}${k}`)).filter(Boolean))
+            .filter((segs) => segs.length);
+          for (const segs of hand.userData.fingers) for (const o of segs) o.userData.rest = o.quaternion.clone();
         }
       },
       (e) => console.warn('AeroStrike model failed to load, using the built-in shapes', e),
@@ -494,5 +596,5 @@ export function buildMech(kit) {
     console.warn('AeroStrike model failed to load, using the built-in shapes', e);
   }
 
-  return { group, setMorph, update };
+  return { group, setMorph, update, jets };
 }

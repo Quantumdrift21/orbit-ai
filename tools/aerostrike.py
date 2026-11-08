@@ -407,7 +407,7 @@ def build_shoulders():
 
 def build_arms():
     """Arms hang straight down from their pivot; mech.js adds the tilt and swing.
-    Shoulder hinge, armoured upper arm, rotary elbow, vented forearm, wrist, hand with articulated fingers."""
+    Shoulder hinge, armoured upper arm, rotary elbow, vented forearm and wrist; build_hand adds the hand."""
     X = (0, math.pi / 2, 0)
     for s in S:
         px, pz = s * 1.78, 0.5  # pivot (Blender x, z; y = 0)
@@ -445,18 +445,6 @@ def build_arms():
         # wrist
         p.append(finish(cyl(0.2, 0.18, loc=at(0, 0, -2.1)), 'trim', bevel=0.01))
         p.append(finish(torus(0.2, 0.014, loc=at(0, 0, -2.1)), 'glow'))
-        # hand: palm, three articulated fingers ending in claws, opposing thumb on the inside
-        p.append(finish(box((0.46, 0.34, 0.32), loc=at(0, -0.02, -2.32)), 'trim', bevel=0.04))
-        for fx in (-0.14, 0, 0.14):
-            p.append(finish(cyl(0.055, 0.12, loc=at(fx, -0.04, -2.48), rot=X), 'dark'))  # knuckle
-            p.append(finish(box((0.1, 0.11, 0.2), loc=at(fx, -0.06, -2.6), rot=(0.2, 0, 0)), 'shell', bevel=0.02))
-            p.append(finish(cyl(0.045, 0.11, loc=at(fx, -0.1, -2.72), rot=X), 'dark'))
-            p.append(finish(box((0.09, 0.1, 0.16), loc=at(fx, -0.15, -2.81), rot=(0.5, 0, 0)), 'shell', bevel=0.02))
-            p.append(finish(cyl(0.045, 0.2, r2=0.0, n=12, loc=at(fx, -0.24, -2.93), rot=(math.pi - 0.7, 0, 0)), 'shell'))
-        thumb = [box((0.1, 0.11, 0.18)), box((0.09, 0.1, 0.14), loc=(0, 0, -0.16))]
-        claw = cyl(0.04, 0.17, r2=0.0, n=12, loc=(0, 0, -0.3), rot=(math.pi, 0, 0))
-        xform([*thumb, claw], loc=at(-0.25, -0.08, -2.36), rot=(0.3, s * 0.9, 0))
-        p += [finish(o, 'shell', bevel=0.02) for o in thumb] + [finish(claw, 'shell')]
         if s < 0:  # right forearm carries the blade: mounting rail, lock clamps, power conduit
             p.append(finish(box((0.07, 0.22, 0.95), loc=at(0.36, 0, -1.6)), 'trim', bevel=0.015))
             for lz in (-1.2, -2.0):
@@ -464,6 +452,62 @@ def build_arms():
             p.append(finish(tube([at(0.2, 0.25, -1.08), at(0.36, 0.2, -1.17), at(0.42, 0.08, -1.17)], 0.025), 'glow'))
         module_at('armL' if s > 0 else 'armR', (px, pz, 0), upper)
         module_at('foreL' if s > 0 else 'foreR', (px, pz - 0.98, 0), p)
+        build_hand(s, at, 'handL' if s > 0 else 'handR', (px, pz - 2.1, 0))
+
+
+# fingers: (outward x, knuckle z, radius, phalanx lengths, spread: - fans out, + in); index by the thumb
+FINGERS = (
+    (0.15, -2.455, 0.048, (0.15, 0.11, 0.09), -0.06),
+    (0.05, -2.47, 0.05, (0.17, 0.12, 0.095), 0.0),
+    (-0.05, -2.465, 0.047, (0.16, 0.115, 0.09), 0.03),
+    (-0.15, -2.44, 0.042, (0.12, 0.085, 0.075), 0.07),
+)
+
+
+def finger(name, r, lengths):
+    """A finger hanging along -z from its knuckle at the origin, curling forward (-y) like ours: one object
+    per phalanx (<name>0, <name>1, ...), each with its origin at the joint it bends at, chained parent to
+    child so mech.js can curl each joint. Round knuckles, tapered bones with an armour plate on the back,
+    and a rounded fingertip with a glowing pad."""
+    segs, z = [], 0.0
+    for i, ln in enumerate(lengths):
+        rr = r * (1 - 0.08 * i)
+        pieces = [
+            finish(sphere(rr * 1.06, seg=20, rings=12), 'dark'),
+            finish(cyl(rr * 0.9, ln, r2=rr, n=20, loc=(0, 0, -ln / 2)), 'trim'),
+            finish(box((rr * 1.7, rr * 0.7, ln * 0.78), loc=(0, rr * 0.72, -ln * 0.5)), 'shell', bevel=rr * 0.3),
+        ]
+        if i == len(lengths) - 1:
+            pieces.append(finish(sphere(rr * 0.92, seg=20, rings=12, loc=(0, 0, -ln)), 'shell'))
+            pieces.append(finish(box((rr * 0.9, rr * 0.3, rr * 1.1), loc=(0, -rr * 0.75, -ln * 0.82)), 'glow'))
+        o = merge(pieces, f'{name}{i}')
+        o.location = (0, 0, z)
+        bpy.context.view_layer.update()
+        if segs:
+            o.parent = segs[-1]
+            o.matrix_parent_inverse = segs[-1].matrix_world.inverted()
+        segs.append(o)
+        z -= ln
+    return segs[0]
+
+
+def build_hand(s, at, name, pivot_three):
+    """A human hand at the wrist: rounded palm with an armoured back, four fingers of three joints and a
+    two-joint thumb on the outside (palm forward, like a person standing with open hands)."""
+    p = [
+        finish(box((0.44, 0.2, 0.34), loc=at(0, 0, -2.3)), 'trim', bevel=0.07),
+        finish(box((0.4, 0.06, 0.28), loc=at(0, 0.11, -2.3)), 'shell', bevel=0.025),
+        finish(box((0.3, 0.02, 0.03), loc=at(0, 0.145, -2.4)), 'glow'),
+        finish(cyl(0.09, 0.16, loc=at(0.2, -0.02, -2.26), rot=(0, s * 0.5, 0)), 'trim', bevel=0.02),  # thumb mount
+    ]
+    for i, (fx, fz, r, lengths, spread) in enumerate(FINGERS):
+        root = finger(f'{name}F{i}', r, lengths)
+        xform([root], loc=at(fx, -0.01, fz), rot=(0, s * spread, 0))  # fan out a little
+        p.append(root)
+    thumb = finger(f'{name}F4', 0.052, (0.12, 0.1, 0.08))
+    xform([thumb], loc=at(0.24, -0.05, -2.3), rot=(-0.45, -s * 0.55, 0))
+    p.append(thumb)
+    module_at(name, pivot_three, p)
 
 
 def build_blade():
@@ -612,7 +656,7 @@ def build_backpack():
 def build_wings():
     """Each wing in its own frame (mech.js points it up and out, and mirrors the right one): blade along +x,
     flat in x-z, thin along y. Hinge hub with locking teeth, main segment with spar, LED, grooves and aileron,
-    and three feathers (<name>F0..F2) that mech.js fans open about their roots."""
+    coverts over the root, and six layered feathers (<name>F0..F5) that mech.js fans open about their roots."""
     Y = (math.pi / 2, 0, 0)  # turns a cylinder to face along y
     for name in ('wingL', 'wingR'):
         p = []
@@ -634,10 +678,16 @@ def build_wings():
         p.append(finish(box((2.5, 0.16, 0.09), loc=(1.3, 0, 0.27)), 'trim', bevel=0.02))  # leading-edge spar
         p.append(finish(box((2.0, 0.14, 0.04), loc=(1.25, 0, 0.12)), 'glow'))
         p.append(finish(box((0.8, 0.09, 0.15), loc=(2.0, 0, -0.27), rot=(0, 0.06, 0)), 'trim', bevel=0.015))  # aileron
-        # feathers, each one object with its origin at its root
-        for i, (length, w) in enumerate(((2.6, 0.46), (2.2, 0.42), (1.8, 0.38))):
-            root = (0.12, 0.05 + i * 0.04, -0.1)
-            f = finish(plate2d(blade_outline(length, w), 0.08, loc=root), 'trim' if i == 1 else 'shell', bevel=0.015)
+        # coverts: overlapping scale plates over the root of the wing, on both faces
+        for k, (ln, w) in enumerate(((1.15, 0.5), (0.9, 0.44), (0.65, 0.38))):
+            for fy in (-1, 1):
+                c = plate2d(blade_outline(ln, w), 0.035, loc=(0.18 + k * 0.32, fy * (0.075 + k * 0.012), 0.06 - k * 0.04))
+                p.append(finish(c, 'trim' if k % 2 else 'shell', bevel=0.008))
+        # six feathers in two overlapping layers (same span as before), each one object with its origin
+        # at its root; mech.js fans them open (FEATHERS there has the same lengths)
+        for i, (length, w) in enumerate(((2.6, 0.44), (2.4, 0.42), (2.2, 0.4), (2.0, 0.38), (1.8, 0.36), (1.6, 0.34))):
+            root = (0.12, 0.05 + (i % 2) * 0.07 + i * 0.012, -0.1)
+            f = finish(plate2d(blade_outline(length, w), 0.07, loc=root), 'trim' if i % 2 else 'shell', bevel=0.015)
             led = finish(box((length * 0.55, 0.1, 0.03), loc=(root[0] + length * 0.45, root[1], root[2])), 'glow')
             spar = finish(box((length * 0.7, 0.1, 0.06), loc=(root[0] + length * 0.38, root[1], root[2] + w * 0.38)), 'dark', bevel=0.01)
             knuckle = finish(cyl(0.07, 0.12, loc=root, rot=Y), 'dark')

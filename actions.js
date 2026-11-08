@@ -186,4 +186,4 @@ function run(name, args) {
   }
 }
 
-module.exports = { run, scanStartApps, parseStartApps, setInstalledApps, installedCount, findApp };
+module.exports = { run, scanStartApps, parseStartApps, setInstalledApps, installedCount, findApp, BROWSERS };

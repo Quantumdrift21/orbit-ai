@@ -133,6 +133,8 @@ test('events become alerts with the project name', () => {
     say: 'Claude finished in demo: Done.',
     caption: 'Claude finished in demo: Done.',
     project: 'demo',
+    who: 'Claude', // for the subtitle bubble's agent chip
+    session: 'claude:s1', // which conversation the chat window opens
     urgent: true,
   });
   assert.strictEqual(w.add(evt('Notification', { notification_type: 'idle_prompt' })), null); // right after done
@@ -275,7 +277,7 @@ test('Antigravity, Copilot and OpenCode configs', () => {
   assert.deepStrictEqual(Object.keys(cp.hooks), ['agentStop', 'notification', 'errorOccurred', 'permissionRequest']);
   const plugin = cw.opencodePlugin(cw.AGENT_URL_PREFIX + 'tok/opencode');
   assert.match(plugin, /export const OrbitPlugin/);
-  assert.ok(plugin.includes('"http://127.0.0.1:47821/agent/tok/opencode"'));
+  assert.ok(plugin.includes('"http://127.0.0.1:47873/agent/tok/opencode"'));
 });
 
 test('Hermes: marked block added and removed, never over an existing hooks: section', () => {
@@ -300,4 +302,89 @@ test('plan reviews and questions are left to the agent, never approved from Orbi
   assert.ok(cw.NEEDS_OWN_ANSWER.has('ExitPlanMode'));
   assert.ok(cw.NEEDS_OWN_ANSWER.has('AskUserQuestion'));
   assert.ok(!cw.NEEDS_OWN_ANSWER.has('Bash'));
+});
+
+test('chat replies: deny with your message, answer a question, keep a working agent going', () => {
+  assert.deepStrictEqual(cw.reply('claude', 'deny', { message: 'use pnpm instead' }).hookSpecificOutput.decision, {
+    behavior: 'deny',
+    message: 'The user replied from Orbit: use pnpm instead',
+  });
+  const q = {
+    questions: [{ question: 'Which DB?', header: 'DB', options: [{ label: 'Postgres' }], multiSelect: false }],
+  };
+  const answered = cw.reply('claude', 'allow', { updatedInput: cw.answerInput(q, { 'Which DB?': 'Postgres' }) });
+  assert.deepStrictEqual(answered.hookSpecificOutput.decision.updatedInput, {
+    ...q,
+    answers: { 'Which DB?': 'Postgres' },
+  });
+  assert.deepStrictEqual(cw.reply('copilot', 'deny', { message: 'not now' }), {
+    behavior: 'deny',
+    message: 'The user replied from Orbit: not now',
+  });
+  assert.deepStrictEqual(cw.stopReply([]), {}); // nothing waiting: let it stop
+  const keepGoing = cw.stopReply(['also update the README']);
+  assert.strictEqual(keepGoing.decision, 'block');
+  assert.match(keepGoing.reason, /also update the README/);
+});
+
+test('transcripts (Claude Code and Codex) become a secret-free chat history', () => {
+  const lines = [
+    '{"cut off line',
+    JSON.stringify({ type: 'user', message: { role: 'user', content: 'fix the login bug' } }),
+    JSON.stringify({ type: 'user', isMeta: true, message: { role: 'user', content: 'caveat' } }),
+    JSON.stringify({
+      type: 'assistant',
+      message: {
+        role: 'assistant',
+        content: [
+          { type: 'text', text: `Found it. key=${FAKE.google}` },
+          { type: 'tool_use', name: 'Bash', input: { command: 'npm test' } },
+        ],
+      },
+    }),
+    JSON.stringify({
+      type: 'response_item',
+      payload: { type: 'message', role: 'assistant', content: [{ type: 'output_text', text: 'Codex here' }] },
+    }),
+    JSON.stringify({
+      type: 'response_item',
+      payload: { type: 'function_call', name: 'shell', arguments: '{"cmd":"ls"}' },
+    }),
+  ].join('\n');
+  const msgs = cw.transcriptMessages(lines);
+  assert.deepStrictEqual(
+    msgs.map((m) => m.role),
+    ['user', 'agent', 'tool', 'agent', 'tool'],
+  );
+  assert.strictEqual(msgs[0].text, 'fix the login bug');
+  assert.ok(!msgs[1].text.includes(FAKE.google)); // secrets hidden
+  assert.strictEqual(msgs[2].text, 'Bash: npm test');
+  assert.strictEqual(cw.transcriptMessages(lines, 2).length, 2); // newest only
+});
+
+test('sessions remember their transcript and folder; messages wait in an inbox until taken', () => {
+  const w = new cw.Watch(clock());
+  const alert = w.add(evt('Notification', { notification_type: 'agent_needs_input', transcript_path: 'C:\t.jsonl' }));
+  const s = w.session(alert.session);
+  assert.strictEqual(s.transcript, 'C:\t.jsonl');
+  assert.strictEqual(s.working, true);
+  assert.strictEqual(w.sessionAt(s.cwd), s);
+  assert.ok(w.queueMessage(s.key, 'and add a test'));
+  assert.strictEqual(w.queueMessage('claude:nope', 'x'), false);
+  assert.deepStrictEqual(w.takeMessages(s.key), ['and add a test']);
+  assert.deepStrictEqual(w.takeMessages(s.key), []);
+  w.add(evt('Stop', {}));
+  assert.strictEqual(w.session(s.key).working, false); // finished: waiting in its terminal
+});
+
+test('moving the port replaces the old Orbit entries instead of leaving them behind', () => {
+  const old = cw.withOrbitHooks(OTHER, 'http://127.0.0.1:47821/claude/abc');
+  const moved = cw.withOrbitHooks(old, cw.URL_PREFIX + 'abc');
+  const urls = Object.values(moved.hooks)
+    .flat()
+    .flatMap((g) => g.hooks || [])
+    .map((h) => h.url)
+    .filter(Boolean);
+  assert.ok(urls.length > 0 && urls.every((u) => u.startsWith(cw.URL_PREFIX)));
+  assert.deepStrictEqual(moved.hooks.SessionStart, OTHER.hooks.SessionStart); // the user's own hook untouched
 });

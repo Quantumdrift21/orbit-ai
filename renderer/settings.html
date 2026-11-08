@@ -212,10 +212,17 @@
       <span id="appsInfo"></span> <a href="#" id="rescan">Rescan</a>
     </div>
 
+    <label class="check"><input id="browserControl" type="checkbox" /> Let Orbit control a browser</label>
+    <div class="hint">
+      Say “search YouTube for lo-fi” or “open GitHub and read the trending page”. Orbit uses its own window of Edge,
+      Chrome or Brave with a separate profile (none of your logins). It never types passwords or payment details, and
+      asks on a card before buying, signing in, posting, deleting or sending a form.
+    </div>
+
     <label>Watch AI agents</label>
     <div class="hint">
       Orbit tells you when an agent needs you, finishes or hits an error, and shows Allow / Deny buttons where the agent
-      allows it. Alerts use your PC's offline voice; nothing is sent to Google unless you ask Orbit about your agents.
+      allows it. Alerts are spoken offline on this PC; nothing is sent to Google unless you ask Orbit about your agents.
       Saving adds Orbit's hooks to that agent's settings (a backup is kept); start a new session afterwards.
     </div>
     <div id="agents">
@@ -232,6 +239,23 @@
     </div>
     <div class="hint">
       Codex asks you to trust new hooks once (Codex → Settings → Hooks). Hermes asks once to approve each hook.
+    </div>
+
+    <label for="alertVoice">Alert voice</label>
+    <div class="row">
+      <select id="alertVoice">
+        <option value="af_heart">Heart – warm (US)</option>
+        <option value="af_bella">Bella – bright (US)</option>
+        <option value="af_nicole">Nicole – soft (US)</option>
+        <option value="am_michael">Michael – calm (US)</option>
+        <option value="am_puck">Puck – playful (US)</option>
+        <option value="bf_emma">Emma – crisp (UK)</option>
+        <option value="bm_george">George – deep (UK)</option>
+      </select>
+      <button id="voiceDownload" type="button">Download</button>
+    </div>
+    <div class="hint" id="voiceHint">
+      A natural offline voice (Kokoro, ~90 MB, downloaded once). Until then alerts use the Windows voice.
     </div>
 
     <label for="micLabel">Microphone</label>

@@ -4,8 +4,13 @@ const fs = require('fs');
 const os = require('os');
 const http = require('http');
 const crypto = require('crypto');
+const { spawn } = require('child_process');
 const actions = require('./actions');
 const aw = require('./agent-watch');
+const { startTypingWatch } = require('./typing-watch');
+const { createBrowser } = require('./browser');
+const { createVoice } = require('./voice');
+const { handleRpc } = require('./mcp');
 const { Brain, STUNTS } = require('./brain');
 const { MOOD_LABELS } = require('./mood');
 
@@ -43,6 +48,8 @@ const DEFAULTS = {
   roam: true, // fly around the screen on its own
   detectApps: true, // let voice open any app from the Start menu (list stays on this PC)
   skin: 'metallic',
+  browserControl: false, // let Gemini drive a separate Orbit browser window (browser.js)
+  alertVoice: 'af_heart', // Kokoro voice for agent alerts (voice.js), used once the model is downloaded
   // Watch AI coding agents (see agent-watch.js): alerts, and approve buttons where the agent allows.
   watchClaude: false,
   watchCodex: false,
@@ -114,6 +121,17 @@ function registerHotkey(accel) {
   }
 }
 
+// Where you're typing, so the roaming robot stays out of the way (only needed while it roams).
+let stopTypingWatch = null;
+function syncTypingWatch() {
+  const want = !!brain?.enabled;
+  if (want && !stopTypingWatch) stopTypingWatch = startTypingWatch((zone) => brain?.setTypingZone(zone));
+  else if (!want && stopTypingWatch) {
+    stopTypingWatch();
+    stopTypingWatch = null;
+  }
+}
+
 // ---------- windows ----------
 function createOrbWindow() {
   const size = ORB_SIZE;
@@ -144,6 +162,7 @@ function createOrbWindow() {
   // The brain moves the window, decides click-through and tells the robot where the mouse is.
   brain = new Brain(orbWin, ANCHOR);
   brain.setEnabled(loadConfig().roam !== false);
+  syncTypingWatch();
 
   orbWin.on('closed', () => {
     brain?.destroy();
@@ -197,6 +216,7 @@ ipcMain.handle('config:set', async (_e, cfg) => {
     try {
       installAgentHooks(id, !!cfg[a.flag]);
       if (cfg[a.flag]) turnedOn.push(id);
+      saveConfig({ hooksPort: aw.PORT }); // the hooks now point at this port
     } catch (e) {
       errors.push(`${a.name}: ${e.message}`);
       saveConfig({ [a.flag]: !!before[a.flag] }); // keep the setting true to what's installed
@@ -235,6 +255,254 @@ ipcMain.on('orb:drag', (_e, dragging) => {
 ipcMain.on('orb:state', (_e, state) => brain?.setBusy(state !== 'idle' && state !== 'error'));
 ipcMain.on('orb:interact', () => brain?.interact());
 
+// Browser control (browser.js): only when turned on in Settings, and only from the robot window.
+const browser = createBrowser({
+  profileDir: path.join(app.getPath('userData'), 'browser-profile'),
+  confirm: (card) => askConfirm(card),
+});
+ipcMain.handle('browser:run', async (e, name, args) => {
+  if (!orbWin || e.sender !== orbWin.webContents) return { ok: false, error: 'Not allowed' };
+  if (!loadConfig().browserControl) return { ok: false, error: 'Browser control is off in Settings' };
+  const result = await browser.run(name, args);
+  const shown = name === 'browser_type' ? { ...args, text: '…' } : args; // typed text stays out of the log
+  appendLog('action', `${name} ${JSON.stringify(shown)} → ${result.ok ? 'ok' : result.error}`);
+  return result;
+});
+
+// Natural alert voice (voice.js): downloaded from Settings only; spoken for the robot window.
+const voice = createVoice({ cacheDir: path.join(app.getPath('userData'), 'models') });
+ipcMain.handle('voice:status', () => ({ downloaded: voice.downloaded() }));
+ipcMain.handle('voice:download', async (e) => {
+  if (!settingsWin || e.sender !== settingsWin.webContents) return { ok: false, error: 'Not allowed' };
+  try {
+    await voice.load({ allowDownload: true, onProgress: (p) => settingsWin?.webContents.send('voice:progress', p) });
+    return { ok: true };
+  } catch (err) {
+    return {
+      ok: false,
+      error: String(err?.message || err)
+        .split('\n')[0]
+        .slice(0, 160),
+    };
+  }
+});
+ipcMain.handle('voice:speak', async (e, text) => {
+  if (!orbWin || e.sender !== orbWin.webContents || !voice.downloaded()) return null;
+  try {
+    return await voice.speak(text, loadConfig().alertVoice);
+  } catch (err) {
+    console.error('voice', err);
+    return null; // the robot page falls back to the Windows voice
+  }
+});
+
+// Subtitle bubble beside the robot for what the alert voice says (renderer/bubble.*): never
+// focused and click-through, except over its buttons (Allow / Deny / Chat, for requests that need
+// your answer); follows the robot while it's showing. A waiting request always wins the bubble.
+let bubbleWin = null;
+let bubbleTimer = null;
+let bubbleSide = 'left';
+let bubbleRequest = null; // id of the request the bubble shows
+let bubbleHovered = false;
+let bubbleHideWanted = false;
+const BUBBLE = { width: 360, height: 220 };
+function placeBubble() {
+  if (!bubbleWin || bubbleWin.isDestroyed() || !brain) return;
+  const c = brain.center();
+  const wa = screen.getDisplayNearestPoint({ x: Math.round(c.x), y: Math.round(c.y) }).workArea;
+  const reach = brain.layout.hit.rx + 6;
+  bubbleSide = c.x - reach - BUBBLE.width >= wa.x ? 'left' : 'right'; // bubble on the robot's left if it fits
+  const x = bubbleSide === 'left' ? c.x - reach - BUBBLE.width : c.x + reach;
+  const y = Math.max(wa.y, Math.min(c.y - 70, wa.y + wa.height - BUBBLE.height));
+  bubbleWin.setBounds({ x: Math.round(x), y: Math.round(y), ...BUBBLE });
+}
+function showBubble(b) {
+  const first = [...pending.values()][0];
+  if (first) b = { ...bubbleFor(first.card), of: pending.size, secs: b.request ? b.secs : undefined };
+  bubbleRequest = first ? first.card.id : null;
+  bubbleHideWanted = false;
+  if (!bubbleWin || bubbleWin.isDestroyed()) {
+    bubbleWin = new BrowserWindow({
+      ...BUBBLE,
+      frame: false,
+      transparent: true,
+      backgroundColor: '#00000000',
+      resizable: false,
+      focusable: false,
+      alwaysOnTop: true,
+      skipTaskbar: true,
+      hasShadow: false,
+      show: false,
+      webPreferences: { preload: path.join(__dirname, 'preload.js'), contextIsolation: true, nodeIntegration: false },
+    });
+    bubbleWin.setIgnoreMouseEvents(true, { forward: true }); // the page still sees hover, to catch its buttons
+    bubbleWin.setAlwaysOnTop(true, 'floating');
+    bubbleWin.loadFile(path.join(__dirname, 'renderer', 'bubble.html'));
+    bubbleWin.on('closed', () => {
+      bubbleWin = null;
+      bubbleHovered = false;
+    });
+    bubbleWin.webContents.once('did-finish-load', () => showBubble(b));
+    return;
+  }
+  placeBubble();
+  bubbleWin.webContents.send('bubble', { ...b, side: bubbleSide });
+  if (!bubbleWin.isVisible()) bubbleWin.showInactive();
+  clearInterval(bubbleTimer);
+  bubbleTimer = setInterval(placeBubble, 33); // keep up with the flying robot
+}
+function hideBubble() {
+  if (pending.size) return; // a request stays until it's answered or times out
+  if (bubbleHovered) return void (bubbleHideWanted = true); // not from under your mouse
+  clearInterval(bubbleTimer);
+  bubbleTimer = null;
+  bubbleRequest = null;
+  bubbleWin?.webContents.send('bubble', null); // fades out, then:
+  setTimeout(() => {
+    if (!bubbleTimer && bubbleWin && !bubbleWin.isDestroyed()) bubbleWin.hide();
+  }, 400);
+}
+ipcMain.on('bubble:show', (e, b) => {
+  if (orbWin && e.sender === orbWin.webContents && b && typeof b.text === 'string') showBubble(b);
+});
+ipcMain.on('bubble:hide', (e) => {
+  if (orbWin && e.sender === orbWin.webContents) hideBubble();
+});
+// Over the bubble's buttons it takes clicks; everywhere else clicks go through to what's below.
+ipcMain.on('bubble:hover', (e, on) => {
+  if (!bubbleWin || e.sender !== bubbleWin.webContents) return;
+  bubbleHovered = !!on;
+  bubbleWin.setIgnoreMouseEvents(!on, { forward: true });
+  if (!on && bubbleHideWanted) hideBubble();
+});
+
+// ---------- agent chat window (renderer/chat.*): the conversation, and your reply ----------
+// History comes from the agent's own transcript file, read only while this window is open and only
+// on this PC (secrets hidden). Replies: answer a waiting request (Allow / Deny with your message /
+// pick an answer), or, while the agent works, a message it gets when it next stops (Stop hook) or
+// checks Orbit (MCP check_messages).
+let chatWin = null;
+let chatSession = null; // 'agent:session id' shown in the chat
+let chatTimer = null;
+const transcriptCache = new Map(); // file → { mtimeMs, messages }
+
+/** The last part of an agent's transcript as chat messages ([] if it can't be read). */
+function readTranscript(file) {
+  try {
+    const f = path.resolve(String(file || ''));
+    // only a transcript (.jsonl) in your own profile: hook events can't point Orbit at other files
+    if (!f.toLowerCase().startsWith(os.homedir().toLowerCase() + path.sep) || !/\.jsonl$/i.test(f)) return [];
+    const st = fs.statSync(f);
+    const hit = transcriptCache.get(f);
+    if (hit && hit.mtimeMs === st.mtimeMs) return hit.messages;
+    const size = Math.min(st.size, 768 * 1024); // the newest part is enough to scroll back through
+    const fd = fs.openSync(f, 'r');
+    const buf = Buffer.alloc(size);
+    fs.readSync(fd, buf, 0, size, st.size - size);
+    fs.closeSync(fd);
+    const messages = aw.transcriptMessages(buf.toString('utf8'), 120);
+    transcriptCache.set(f, { mtimeMs: st.mtimeMs, messages });
+    return messages;
+  } catch {
+    return [];
+  }
+}
+
+/** What the chat needs to know about a waiting request (the whole input, secrets hidden). */
+const chatCard = (c) => ({
+  id: c.id,
+  kind: c.kind,
+  who: c.who,
+  tool: c.tool,
+  full: c.full ?? c.detail,
+  secret: !!c.secret,
+  questions: c.questions,
+  until: c.until,
+});
+
+function refreshChat() {
+  if (!chatWin || chatWin.isDestroyed()) return;
+  const s = watch.session(chatSession);
+  const waiting = [...pending.values()].map((p) => p.card).filter((c) => c.kind !== 'confirm');
+  const req = waiting.find((c) => c.session && c.session === chatSession) || (!s ? waiting[0] : null);
+  chatWin.webContents.send('chat', {
+    session: s && {
+      key: s.key,
+      who: s.who,
+      project: s.project,
+      working: !!s.working,
+      waiting: s.inbox.length,
+      hasTranscript: !!s.transcript,
+    },
+    sessions: [...watch.sessions.values()].map((x) => ({ key: x.key, who: x.who, project: x.project })),
+    messages: s?.transcript ? readTranscript(s.transcript) : [],
+    request: req ? chatCard(req) : null,
+    now: Date.now(),
+  });
+}
+
+/** Opening the chat on a waiting request gives you longer to answer (the agent waits up to 60 s). */
+function extendRequests(session) {
+  for (const [id, p] of pending) {
+    if (p.card.session !== session || !p.res) continue;
+    const until = p.card.started + (aw.HOOK_EVENTS.PermissionRequest - 5) * 1000; // just inside its hook timeout
+    if (until <= p.card.until) continue;
+    clearTimeout(p.timer);
+    p.card.until = until;
+    p.timer = setTimeout(() => settleApproval(id, null), until - Date.now());
+  }
+}
+
+function openChat(session) {
+  chatSession = (typeof session === 'string' && watch.session(session)?.key) || watch.session()?.key || null;
+  extendRequests(chatSession);
+  if (chatWin && !chatWin.isDestroyed()) {
+    chatWin.show();
+    chatWin.focus();
+    refreshChat();
+    refreshRequests();
+    return;
+  }
+  const c = brain?.center() ?? { x: 600, y: 400 };
+  const wa = screen.getDisplayNearestPoint({ x: Math.round(c.x), y: Math.round(c.y) }).workArea;
+  const size = { width: 420, height: 600 };
+  chatWin = new BrowserWindow({
+    ...size,
+    x: Math.round(Math.max(wa.x, Math.min(c.x - size.width - 90, wa.x + wa.width - size.width))),
+    y: Math.round(Math.max(wa.y, Math.min(c.y - 260, wa.y + wa.height - size.height))),
+    minWidth: 340,
+    minHeight: 380,
+    frame: false,
+    alwaysOnTop: true,
+    backgroundColor: '#0d0e17',
+    title: 'Orbit – agent chat',
+    webPreferences: { preload: path.join(__dirname, 'preload.js'), contextIsolation: true, nodeIntegration: false },
+  });
+  chatWin.setAlwaysOnTop(true, 'floating');
+  chatWin.loadFile(path.join(__dirname, 'renderer', 'chat.html'));
+  chatWin.webContents.once('did-finish-load', refreshChat);
+  chatTimer = setInterval(refreshChat, 2000); // the transcript grows while the agent works
+  chatWin.on('closed', () => {
+    clearInterval(chatTimer);
+    chatWin = null;
+    transcriptCache.clear();
+  });
+}
+ipcMain.on('chat:open', (e, session) => {
+  const from = [orbWin, bubbleWin, chatWin].filter(Boolean).map((w) => w.webContents);
+  if (from.includes(e.sender)) openChat(session);
+});
+ipcMain.on('chat:close', (e) => {
+  if (chatWin && e.sender === chatWin.webContents) chatWin.close();
+});
+// A message for a working agent: it gets it when it next stops, or checks Orbit over MCP.
+ipcMain.handle('chat:send', (e, session, text) => {
+  if (!chatWin || e.sender !== chatWin.webContents) return { ok: false };
+  const ok = watch.queueMessage(String(session), text);
+  refreshChat();
+  return { ok };
+});
+
 ipcMain.handle('action:run', (_e, name, args) => {
   const result = actions.run(name, args);
   appendLog('action', `${name} ${JSON.stringify(args)} → ${JSON.stringify(result)}`);
@@ -270,8 +538,6 @@ ipcMain.on('orb:setSkin', (_e, name) => setSkin(name));
 const watch = new aw.Watch();
 const pending = new Map(); // approval id → { res, timer, card, agent }
 let claudeServer = null;
-let approveWin = null;
-let approveReady = false;
 let nextApprovalId = 1;
 
 function claudeToken() {
@@ -318,15 +584,18 @@ function startClaudeServer() {
       res.writeHead(code, { 'Content-Type': 'application/json' });
       res.end(JSON.stringify(body));
     };
-    // /claude/<token> from Claude Code, or /agent/<token>/<agent>/<event> from the bridge or plugin.
+    // /claude/<token> from Claude Code, /agent/<token>/<agent>/<event> from the bridge or plugin,
+    // /mcp/<token> for Orbit's MCP tools (ask_user, check_messages; mcp.js).
     const parts = (req.url || '').split('?')[0].split('/').filter(Boolean);
     let agent = null;
     let hookName = '';
+    const isMcp = parts[0] === 'mcp' && parts[1] === token && parts.length === 2;
     if (parts[0] === 'claude' && parts[1] === token && parts.length === 2) agent = 'claude';
     else if (parts[0] === 'agent' && parts[1] === token && aw.AGENTS[parts[2]] && parts.length <= 4) {
       [agent, hookName = ''] = [parts[2], parts[3]];
     }
-    if (req.method !== 'POST' || !agent) return reply(404);
+    if (isMcp && req.method !== 'POST') return reply(405); // no server-initiated stream
+    if (req.method !== 'POST' || (!agent && !isMcp)) return reply(404);
     if (!['127.0.0.1', '::1', '::ffff:127.0.0.1'].includes(req.socket.remoteAddress)) return reply(403);
     const chunks = [];
     let size = 0;
@@ -345,13 +614,35 @@ function startClaudeServer() {
       } catch {
         return reply(400);
       }
+      if (isMcp) {
+        handleRpc(evt, mcpHandlers).then(
+          (out) => (out ? reply(200, out) : (res.writeHead(202), res.end())),
+          () => reply(500),
+        );
+        return;
+      }
       try {
         evt = aw.normalize(agent, hookName, evt);
         if (!evt) return reply(200);
         if (evt.hook_event_name === 'PermissionRequest' && aw.AGENTS[agent].approve) {
-          // Plan reviews and questions need the user's own answer, never a bare "allow".
+          // A question gets answered from Orbit's bubble or chat (Claude Code takes the answers);
+          // a plan review still needs the user's own careful answer in the terminal.
+          if (evt.tool_name === 'AskUserQuestion' && agent === 'claude') return askApproval(evt, res, true);
           if (!aw.NEEDS_OWN_ANSWER.has(evt.tool_name)) return askApproval(evt, res);
           evt = { ...evt, hook_event_name: 'Notification', notification_type: 'permission_prompt' };
+        }
+        if (evt.hook_event_name === 'Stop' && (agent === 'claude' || agent === 'codex')) {
+          // Messages you typed in Orbit's chat while it worked: hand them over so it carries on.
+          const key = `${agent}:${evt.session_id || 'unknown'}`;
+          const msgs = watch.takeMessages(key);
+          if (msgs.length) {
+            reply(200, aw.stopReply(msgs));
+            watch.add(evt);
+            const s = watch.session(key);
+            if (s) s.working = true; // it continues with your message
+            refreshChat();
+            return;
+          }
         }
         reply(200); // answer at once so the agent never waits on Orbit
         onClaudeEvent(evt);
@@ -394,93 +685,184 @@ function onClaudeEvent(evt) {
   orbWin.webContents.send('claude:event', r);
 }
 
-function askApproval(evt, res) {
-  watch.add(evt); // remembered for the summary and to skip the matching notification
+// ---------- requests that need your answer: shown in the subtitle bubble and the chat window ----------
+// pending: id → { card, timer, agent, res (an agent's waiting HTTP request) | resolve (Orbit's own) }.
+// Kinds: 'permission' (Allow / Deny, or Deny with your message), 'question' (an agent's
+// AskUserQuestion: pick an option or type an answer), 'ask' (MCP ask_user: type an answer),
+// 'confirm' (browser control's risky steps: Allow / Deny).
+
+function addRequest(card, wait, { res = null, resolve = null, agent = 'orbit' } = {}) {
   const id = nextApprovalId++;
-  const who = aw.AGENTS[evt.agent]?.label || 'Claude';
-  const { text, partial } = aw.approvalDetail(evt.tool_name, evt.tool_input);
-  const card = {
-    id,
-    who,
-    project: path.basename(String(evt.cwd || '')) || who,
-    tool: String(evt.tool_name || 'a tool'),
-    detail: text,
-    partial, // the card can't show all of it: no Allow (enforced in claude:decide)
-    until: Date.now() + aw.APPROVE_WAIT_SECS * 1000,
-  };
-  const timer = setTimeout(() => settleApproval(id, null), aw.APPROVE_WAIT_SECS * 1000);
-  pending.set(id, { res, timer, card, agent: evt.agent || 'claude' });
-  // Answered in the terminal or the agent stopped: drop the card.
-  res.on('close', () => settleApproval(id, null, true));
+  card.id = id;
+  card.started = Date.now();
+  card.until = card.started + wait * 1000;
+  const timer = setTimeout(() => settleApproval(id, null), wait * 1000);
+  pending.set(id, { card, timer, agent, res, resolve });
+  if (res) res.on('close', () => settleApproval(id, null, true)); // answered in the terminal, or it stopped
   brain?.interact();
   brain?.flash('alert', 2);
+  refreshRequests();
+  return id;
+}
+
+function askApproval(evt, res, isQuestion = false) {
+  watch.add(evt); // remembered for the summary, the chat, and to skip the matching notification
+  const who = aw.AGENTS[evt.agent]?.label || 'Claude';
+  const input = evt.tool_input && typeof evt.tool_input === 'object' ? evt.tool_input : {};
+  const { text, partial } = aw.approvalDetail(evt.tool_name, input);
+  const full = JSON.stringify(input, null, 2);
+  const card = {
+    kind: isQuestion ? 'question' : 'permission',
+    who,
+    project: path.basename(String(evt.cwd || '')) || who,
+    session: `${evt.agent || 'claude'}:${evt.session_id || 'unknown'}`,
+    tool: String(evt.tool_name || 'a tool'),
+    detail: text,
+    partial, // the bubble can't show all of it: Allow only from the chat (enforced in claude:decide)
+    full: aw.hideSecrets(full), // the whole input, for the chat window
+    secret: aw.hideSecrets(full) !== full, // something hidden: Allow only in the agent's own prompt
+    questions: isQuestion && Array.isArray(input.questions) ? input.questions : null,
+    input,
+  };
+  card.say = isQuestion
+    ? `${who} asks: ${String(card.questions?.[0]?.question || 'a question').slice(0, 140)}`
+    : `${who} asks to use ${card.tool} in ${card.project}`;
+  addRequest(card, aw.APPROVE_WAIT_SECS, { res, agent: evt.agent || 'claude' });
   orbWin?.webContents.send('claude:event', {
     kind: 'input',
     urgent: true,
-    say: `${who} asks to use ${card.tool} in ${card.project}`,
+    say: card.say,
     caption: `${card.project}: ${card.tool} — ${card.detail}`,
     project: card.project,
+    who,
+    session: card.session,
+    request: card.id,
   });
-  showApprovalCards();
 }
 
-/** behavior: 'allow' | 'deny' | null (null = let Claude Code show its own prompt). */
-function settleApproval(id, behavior, closed = false) {
+/**
+ * Orbit's own confirm card (browser control's risky steps), in the bubble like agent requests.
+ * Resolves 'allow', 'deny' or null (no answer in time). Only the bubble's buttons answer it.
+ */
+function askConfirm({ detail, site }) {
+  return new Promise((resolve) => {
+    const card = {
+      kind: 'confirm',
+      who: 'Orbit',
+      project: String(site || 'the browser'),
+      tool: 'the browser',
+      detail: String(detail).slice(0, 100),
+      say: `Orbit wants to ${String(detail).slice(0, 80)}`,
+    };
+    addRequest(card, aw.APPROVE_WAIT_SECS, { resolve: (b) => resolve(b) });
+  });
+}
+
+const MCP_ASK_SECS = 10 * 60; // an agent asking through MCP waits up to 10 minutes for your answer
+
+/** The tools AI agents call on Orbit's MCP server (mcp.js). */
+const mcpHandlers = {
+  askUser: ({ question, cwd }) =>
+    new Promise((resolve) => {
+      const s = watch.sessionAt(cwd);
+      const who = s?.who || 'Claude';
+      const card = {
+        kind: 'ask',
+        who,
+        project: s?.project || path.basename(cwd) || who,
+        session: s?.key || null,
+        tool: 'a question',
+        detail: aw.hideSecrets(question),
+        say: `${who} asks: ${aw.hideSecrets(question).slice(0, 140)}`,
+      };
+      const id = addRequest(card, MCP_ASK_SECS, { resolve: (b, extra) => resolve(b ? extra?.message || null : null) });
+      orbWin?.webContents.send('claude:event', {
+        kind: 'input',
+        urgent: true,
+        say: card.say,
+        caption: card.say,
+        project: card.project,
+        who,
+        session: card.session,
+        request: id,
+      });
+    }),
+  checkMessages: ({ cwd }) => {
+    const s = watch.sessionAt(cwd);
+    const msgs = s ? watch.takeMessages(s.key) : [];
+    if (msgs.length) refreshChat();
+    return msgs;
+  },
+};
+
+/** behavior: 'allow' | 'deny' | null (null = no answer: the agent shows its own prompt). */
+function settleApproval(id, behavior, closed = false, extra = {}) {
   const p = pending.get(id);
   if (!p) return;
   pending.delete(id);
   clearTimeout(p.timer);
-  if (!closed && !p.res.writableEnded) {
+  if (p.resolve) p.resolve(behavior, extra);
+  else if (!closed && !p.res.writableEnded) {
     p.res.writeHead(200, { 'Content-Type': 'application/json' });
-    p.res.end(JSON.stringify(aw.reply(p.agent, behavior)));
+    p.res.end(JSON.stringify(aw.reply(p.agent, behavior, extra)));
   }
-  showApprovalCards();
+  refreshRequests();
 }
 
-function showApprovalCards() {
-  const cards = [...pending.values()].map((p) => p.card);
-  if (!cards.length) return approveWin?.isDestroyed() === false && approveWin.hide();
-  if (!approveWin || approveWin.isDestroyed()) {
-    approveReady = false;
-    approveWin = new BrowserWindow({
-      width: 320,
-      height: 170,
-      frame: false,
-      resizable: false,
-      alwaysOnTop: true,
-      skipTaskbar: true,
-      focusable: false, // never steal focus (or a stray Enter) from the terminal
-      show: false,
-      backgroundColor: '#12121a',
-      webPreferences: { preload: path.join(__dirname, 'preload.js'), contextIsolation: true, nodeIntegration: false },
-    });
-    approveWin.setAlwaysOnTop(true, 'floating');
-    approveWin.loadFile(path.join(__dirname, 'renderer', 'approve.html'));
-    approveWin.webContents.once('did-finish-load', () => {
-      approveReady = true;
-      showApprovalCards();
-    });
-    approveWin.on('closed', () => (approveWin = null));
-    return;
+/** The oldest waiting request goes in the bubble (with "1 of N"); the chat shows its session's. */
+function refreshRequests() {
+  const first = [...pending.values()][0];
+  if (first) showBubble({ ...bubbleFor(first.card), of: pending.size });
+  else if (bubbleRequest) {
+    bubbleRequest = null;
+    hideBubble();
   }
-  if (!approveReady) return;
-  // Beside the robot: left of it, or right if there's no room; inside the screen.
-  const [ox, oy] = orbWin ? orbWin.getPosition() : [0, 0];
-  const wa = screen.getDisplayNearestPoint({ x: ox, y: oy }).workArea;
-  const x =
-    ox - 330 >= wa.x ? ox - 330 : Math.min(ox + (brain?.size.width || ORB_SIZE.width) + 10, wa.x + wa.width - 320);
-  const y = Math.max(wa.y, Math.min(oy, wa.y + wa.height - 170));
-  approveWin.setBounds({ x, y, width: 320, height: 170 });
-  approveWin.webContents.send('claude:cards', { cards, now: Date.now() });
-  if (!approveWin.isVisible()) approveWin.showInactive();
+  refreshChat();
 }
 
-// Only the card window can approve: the Gemini (robot) window never can.
-ipcMain.on('claude:decide', (e, id, behavior) => {
-  if (!approveWin || e.sender !== approveWin.webContents) return;
+/** What the bubble shows for a request (never the whole input: that's the chat's job). */
+const bubbleFor = (c) => ({
+  text: c.say,
+  kind: 'input',
+  who: c.who,
+  project: c.project,
+  session: c.session,
+  request: {
+    id: c.id,
+    kind: c.kind,
+    detail: c.detail,
+    partial: !!c.partial,
+    question: c.questions?.[0]?.question,
+    options:
+      c.questions?.length === 1 && !c.questions[0].multiSelect ? c.questions[0].options?.map((o) => o.label) : null,
+    until: c.until,
+    chat: c.kind !== 'confirm',
+  },
+});
+
+// Only the bubble and the chat window can answer: the Gemini (robot) window never can.
+// extra: { message } (deny with your reply, or the answer to an ask) | { answers } (a question).
+ipcMain.on('claude:decide', (e, id, behavior, extra = {}) => {
+  const fromBubble = bubbleWin && e.sender === bubbleWin.webContents;
+  const fromChat = chatWin && e.sender === chatWin.webContents;
+  if (!fromBubble && !fromChat) return;
   if (!['allow', 'deny', 'terminal'].includes(behavior)) return;
-  if (behavior === 'allow' && pending.get(id)?.card.partial) return; // never approve what wasn't shown
-  settleApproval(id, behavior === 'terminal' ? null : behavior);
+  const p = pending.get(id);
+  if (!p) return;
+  const c = p.card;
+  // never approve what wasn't shown: the bubble shows a part, the chat all (secrets stay hidden)
+  if (behavior === 'allow' && c.kind === 'permission' && (c.secret || (fromBubble && c.partial))) return;
+  const message = String(extra?.message ?? '')
+    .trim()
+    .slice(0, 2000);
+  if (c.kind === 'question' && behavior === 'allow') {
+    const answers = {};
+    for (const [q, a] of Object.entries(extra?.answers || {})) if (a) answers[String(q)] = String(a).slice(0, 500);
+    if (!Object.keys(answers).length) return;
+    return settleApproval(id, 'allow', false, { updatedInput: aw.answerInput(c.input, answers) });
+  }
+  if (c.kind === 'ask') return settleApproval(id, message ? 'allow' : null, false, { message });
+  settleApproval(id, behavior === 'terminal' ? null : behavior, false, behavior === 'deny' ? { message } : {});
 });
 
 ipcMain.handle('claude:status', () => {
@@ -508,6 +890,30 @@ const agentDir = (id) =>
     hermes: hermesHome(),
   })[id];
 
+/**
+ * Add (or remove) Orbit's MCP server in Claude Code's user settings, through Claude Code's own CLI
+ * (it owns ~/.claude.json, which it rewrites constantly). Best effort: without the CLI, the hooks
+ * still work and only ask_user / check_messages are missing.
+ */
+function registerClaudeMcp(on) {
+  const run = (args) =>
+    new Promise((done) => {
+      const p = spawn('claude', args, { shell: true, windowsHide: true, stdio: 'ignore' });
+      p.on('error', () => done(false));
+      p.on('exit', (code) => done(code === 0));
+    });
+  // the arguments are fixed words plus Orbit's own local URL (a hex token): nothing from outside
+  run(['mcp', 'remove', '--scope', 'user', 'orbit'])
+    .then((removed) =>
+      on
+        ? run(['mcp', 'add', '--transport', 'http', '--scope', 'user', 'orbit', aw.MCP_URL_PREFIX + claudeToken()])
+        : removed,
+    )
+    .then((ok) => {
+      if (on ? ok : true) saveConfig({ claudeMcp: on }); // remembered so it isn't redone every start
+    });
+}
+
 /** Add or remove Orbit's hooks for one agent, touching only Orbit's own entries. */
 function installAgentHooks(id, on) {
   const script = bridgePath();
@@ -523,6 +929,7 @@ function installAgentHooks(id, on) {
   };
   switch (id) {
     case 'claude': // Claude Code posts straight to Orbit's URL, no bridge script
+      registerClaudeMcp(on);
       return shared(claudeSettingsPath(), (c) => aw.withOrbitHooks(c, claudeUrl()), aw.withoutOrbitHooks);
     case 'codex':
       return shared(home('.codex', 'hooks.json'), aw.withCodexHooks, aw.withoutCodexHooks);
@@ -587,6 +994,11 @@ ipcMain.on('menu:show', () => {
     { type: 'separator' },
     { label: 'Settings…', click: openSettings },
     {
+      label: 'Agent chat…',
+      visible: Object.values(aw.AGENTS).some((a) => loadConfig()[a.flag]),
+      click: () => openChat(),
+    },
+    {
       label: 'Open chat logs',
       click: () => {
         fs.mkdirSync(logsDir(), { recursive: true });
@@ -600,6 +1012,7 @@ ipcMain.on('menu:show', () => {
       checked: brain?.enabled ?? true,
       click: (item) => {
         brain?.setEnabled(item.checked);
+        syncTypingWatch();
         saveConfig({ roam: item.checked });
       },
     },
@@ -661,12 +1074,29 @@ if (!app.requestSingleInstanceLock()) {
     if (cfg.detectApps !== false) scanApps();
     createOrbWindow();
     registerHotkey(cfg.hotkey);
-    syncListener(); // hooks were installed when each agent was turned on
+    // Hooks point at Orbit's port: when the port changed (another app took the old one), rewrite
+    // each watched agent's entries once (Orbit's own entries are recognised on any port).
+    if ((cfg.hooksPort ?? 47821) !== aw.PORT) {
+      for (const [id, a] of Object.entries(aw.AGENTS)) {
+        if (!cfg[a.flag]) continue;
+        try {
+          installAgentHooks(id, true); // Claude Code: also re-adds the MCP server with the new URL
+        } catch (e) {
+          console.error(`moving ${a.name}'s hooks`, e);
+        }
+      }
+      saveConfig({ hooksPort: aw.PORT });
+    } else if (cfg.watchClaude && !cfg.claudeMcp) registerClaudeMcp(true); // watching from before the MCP tools
+    syncListener().then((err) => {
+      if (err) console.error('agent listener:', err); // e.g. another program has the port
+    });
     if (!cfg.apiKey) openSettings();
   });
 
   app.on('will-quit', () => {
     globalShortcut.unregisterAll();
+    stopTypingWatch?.();
+    browser.close();
     stopClaudeServer(); // pending approvals fall back to Claude Code's own prompt
   });
 }
