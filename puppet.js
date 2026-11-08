@@ -113,6 +113,9 @@ ws.on('open', () => {
     case 'nyx:focusWindow':
       payload = { action: 'nyx:focusWindow', payload: { windowId: parseInt(args[1]) } };
       break;
+    case 'nyx:ping':
+      payload = { action: 'nyx:ping', payload: {} };
+      break;
 
     default:
       console.error('Unknown command:', command);
@@ -123,8 +126,22 @@ ws.on('open', () => {
   ws.send(JSON.stringify({ type: 'puppet', ...payload }));
   console.log(`Sent: ${command}`, JSON.stringify(payload.payload || ''));
   
-  // Wait a bit for response
-  setTimeout(() => { ws.close(); process.exit(0); }, 500);
+  // Nyx capabilities wait for nyx:result (15s); basic puppets are fire-and-forget
+  const isNyx = command.startsWith('nyx:');
+  ws._isNyx = isNyx;
+  if (isNyx) {
+    ws._responded = false;
+    ws._responseTimeout = setTimeout(() => {
+      if (!ws._responded) {
+        console.error(`Timeout waiting for ${command} result`);
+        ws.close();
+        process.exit(1);
+      }
+    }, 15000);
+  } else {
+    // Basic puppet: fire and exit
+    setTimeout(() => { ws.close(); process.exit(0); }, 500);
+  }
 });
 
 ws.on('error', (e) => {
@@ -146,6 +163,12 @@ ws.on('message', (data) => {
         } else {
           console.log('  Data:', JSON.stringify(msg, null, 2).slice(0, 500));
         }
+      }
+      // Clear timeout and exit for Nyx capabilities
+      if (ws._responseTimeout) {
+        clearTimeout(ws._responseTimeout);
+        ws._responded = true;
+        setTimeout(() => { ws.close(); process.exit(0); }, 100);
       }
     }
   } catch {}

@@ -41,6 +41,7 @@ const BRIDGE_URL = 'ws://127.0.0.1:8765';
 let bridgeWs = null;
 let bridgeReconnectTimer = null;
 let bridgeSessionId = 0;
+let bridgeToken = null; // auth token from bridge hello
 
 function connectBridge() {
   console.log('[Orbit] connectBridge called');
@@ -50,7 +51,7 @@ function connectBridge() {
     bridgeWs = new WebSocket(BRIDGE_URL);
     bridgeWs.onopen = () => {
       console.log('[Orbit] Connected to Hermes');
-      bridgeWs.send(JSON.stringify({ type: 'status', connected: true, version: '1.0' }));
+      // status with token sent after hello received (in handleBridgeMessage)
       if (bridgeReconnectTimer) { clearInterval(bridgeReconnectTimer); bridgeReconnectTimer = null; }
     };
     bridgeWs.onmessage = (ev) => handleBridgeMessage(ev.data);
@@ -72,6 +73,12 @@ function handleBridgeMessage(data) {
   switch (msg.type) {
     case 'hello':
       console.log('[Bridge] Hello from Hermes:', msg);
+      if (msg.token) {
+        bridgeToken = msg.token;
+        console.log('[Bridge] Auth token received');
+        // Send status with token to authenticate
+        bridgeWs?.send(JSON.stringify({ type: 'status', connected: true, version: '1.0', token: bridgeToken }));
+      }
       break;
     case 'puppet':
       handlePuppet(msg);

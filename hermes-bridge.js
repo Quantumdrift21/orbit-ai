@@ -33,6 +33,10 @@ function log(msg) {
 // Clear log file on start
 fs.writeFileSync(logFile, '');
 
+// Auth token - generated once on bridge startup
+const BRIDGE_TOKEN = require('crypto').randomBytes(16).toString('hex');
+log(`[Bridge] Auth token generated: ${BRIDGE_TOKEN.substring(0, 8)}...`);
+
 let orbitSocket = null;
 let pendingPuppet = new Map(); // requestId -> { ws, resolve, timeout }
 let puppetRequestId = 0;
@@ -63,14 +67,21 @@ wss.on('connection', (ws, req) => {
 
   ws.on('error', (e) => log('[Bridge] WS error:', e.message));
 
-  // Send hello
-  ws.send(JSON.stringify({ type: 'hello', version: '1.0', timestamp: Date.now() }));
+  // Send hello with auth token
+  ws.send(JSON.stringify({ type: 'hello', version: '1.0', timestamp: Date.now(), token: BRIDGE_TOKEN }));
 });
 
 function handleOrbitMessage(msg, clientWs) {
   log('[Bridge] handleOrbitMessage called:', msg.type, msg.action || '');
   // Identify Orbit connection (main.js sends status on connect)
   if (msg.type === 'status' && msg.connected === true) {
+    // Verify auth token
+    if (msg.token !== BRIDGE_TOKEN) {
+      log('[Bridge] Rejected status: invalid token');
+      clientWs.send(JSON.stringify({ type: 'error', error: 'Invalid auth token' }));
+      clientWs.close();
+      return;
+    }
     orbitSocket = clientWs;
     log('[Bridge] Orbit identified via status message');
     // Flush queued puppet commands
