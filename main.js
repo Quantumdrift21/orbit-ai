@@ -61,13 +61,17 @@ let settingsWin = null;
 // ---------- config (API key encrypted with Windows DPAPI via safeStorage) ----------
 const configPath = () => path.join(app.getPath('userData'), 'config.json');
 
-function loadConfig() {
-  let raw = {};
+/** The file as stored ({} on first run): the key still encrypted, no defaults filled in. */
+function readStored() {
   try {
-    raw = JSON.parse(fs.readFileSync(configPath(), 'utf8'));
+    return JSON.parse(fs.readFileSync(configPath(), 'utf8'));
   } catch {
-    /* first run */
+    return {}; // first run
   }
+}
+
+function loadConfig() {
+  const raw = readStored();
   let apiKey = '';
   try {
     if (raw.apiKeyEnc && safeStorage.isEncryptionAvailable()) {
@@ -84,13 +88,21 @@ function loadConfig() {
 }
 
 function saveConfig(cfg) {
-  const out = { ...loadConfig(), ...cfg }; // keep fields Settings doesn't show (e.g. micLabel)
-  if (out.apiKey && safeStorage.isEncryptionAvailable()) {
-    out.apiKeyEnc = safeStorage.encryptString(out.apiKey).toString('base64');
+  // Start from the stored file, so fields Settings doesn't show (e.g. micLabel) are kept and the
+  // stored key is left exactly as it is unless a new one is given: a save never drops a key it
+  // couldn't decrypt this time.
+  const { apiKey, ...rest } = cfg;
+  const out = { ...readStored(), ...rest };
+  if (apiKey !== undefined) {
     delete out.apiKey;
+    delete out.apiKeyEnc;
+    // a key from GEMINI_API_KEY stays there: storing it would hide a later change of the variable
+    if (apiKey && apiKey !== process.env.GEMINI_API_KEY) {
+      if (safeStorage.isEncryptionAvailable()) out.apiKeyEnc = safeStorage.encryptString(apiKey).toString('base64');
+      else out.apiKey = apiKey;
+    }
   }
-  fs.mkdirSync(path.dirname(configPath()), { recursive: true });
-  fs.writeFileSync(configPath(), JSON.stringify(out, null, 2));
+  aw.writeAtomic(configPath(), JSON.stringify(out, null, 2)); // a crash mid-write can't cut the file short
 }
 
 function registerHotkey(accel) {
@@ -212,7 +224,7 @@ ipcMain.handle('config:set', async (_e, cfg) => {
 ipcMain.on('win:move', (_e, dx, dy) => {
   if (!orbWin) return;
   const [x, y] = orbWin.getPosition();
-  orbWin.setBounds({ x: Math.round(x + dx), y: Math.round(y + dy), ...ORB_SIZE });
+  orbWin.setBounds({ x: Math.round(x + dx), y: Math.round(y + dy), ...(brain?.size || ORB_SIZE) }); // grows as AeroStrike
   brain?.onUserMove();
 });
 ipcMain.on('orb:drag', (_e, dragging) => {
@@ -239,6 +251,8 @@ ipcMain.handle('apps:info', () => ({ count: actions.installedCount(), scanning: 
 ipcMain.handle('apps:rescan', async () => ({ count: await (appScan || scanApps()) }));
 
 ipcMain.on('orb:stunt', (_e, name) => brain?.stunt(name, true));
+ipcMain.on('orb:transform', (_e, form) => brain?.transform(form === 'orb' || form === 'mech' ? form : undefined, true));
+ipcMain.on('orb:defence', (_e, on) => brain?.setDefence(on === true));
 
 // Skin changes (menu or voice) are saved and sent straight to the robot, without the
 // config:changed reload, so a conversation in progress isn't cut off.
@@ -384,12 +398,14 @@ function askApproval(evt, res) {
   watch.add(evt); // remembered for the summary and to skip the matching notification
   const id = nextApprovalId++;
   const who = aw.AGENTS[evt.agent]?.label || 'Claude';
+  const { text, partial } = aw.approvalDetail(evt.tool_name, evt.tool_input);
   const card = {
     id,
     who,
     project: path.basename(String(evt.cwd || '')) || who,
     tool: String(evt.tool_name || 'a tool'),
-    detail: aw.toolDetail(evt.tool_name, evt.tool_input),
+    detail: text,
+    partial, // the card can't show all of it: no Allow (enforced in claude:decide)
     until: Date.now() + aw.APPROVE_WAIT_SECS * 1000,
   };
   const timer = setTimeout(() => settleApproval(id, null), aw.APPROVE_WAIT_SECS * 1000);
@@ -451,7 +467,8 @@ function showApprovalCards() {
   // Beside the robot: left of it, or right if there's no room; inside the screen.
   const [ox, oy] = orbWin ? orbWin.getPosition() : [0, 0];
   const wa = screen.getDisplayNearestPoint({ x: ox, y: oy }).workArea;
-  const x = ox - 330 >= wa.x ? ox - 330 : Math.min(ox + ORB_SIZE.width + 10, wa.x + wa.width - 320);
+  const x =
+    ox - 330 >= wa.x ? ox - 330 : Math.min(ox + (brain?.size.width || ORB_SIZE.width) + 10, wa.x + wa.width - 320);
   const y = Math.max(wa.y, Math.min(oy, wa.y + wa.height - 170));
   approveWin.setBounds({ x, y, width: 320, height: 170 });
   approveWin.webContents.send('claude:cards', { cards, now: Date.now() });
@@ -462,6 +479,7 @@ function showApprovalCards() {
 ipcMain.on('claude:decide', (e, id, behavior) => {
   if (!approveWin || e.sender !== approveWin.webContents) return;
   if (!['allow', 'deny', 'terminal'].includes(behavior)) return;
+  if (behavior === 'allow' && pending.get(id)?.card.partial) return; // never approve what wasn't shown
   settleApproval(id, behavior === 'terminal' ? null : behavior);
 });
 
@@ -472,24 +490,6 @@ ipcMain.handle('claude:status', () => {
 });
 
 const claudeSettingsPath = () => path.join(os.homedir(), '.claude', 'settings.json');
-
-/** Add or remove Orbit's hook entries in ~/.claude/settings.json; other settings stay untouched. */
-function installClaudeHooks(on) {
-  const file = claudeSettingsPath();
-  let settings = {};
-  if (fs.existsSync(file)) {
-    try {
-      settings = JSON.parse(fs.readFileSync(file, 'utf8').replace(/^﻿/, ''));
-    } catch {
-      throw new Error("couldn't read ~/.claude/settings.json, so Orbit left it unchanged");
-    }
-    if (!fs.existsSync(file + '.orbit-backup')) fs.copyFileSync(file, file + '.orbit-backup'); // keep the original
-  } else if (!on) return;
-  const next = on ? aw.withOrbitHooks(settings, claudeUrl()) : aw.withoutOrbitHooks(settings);
-  fs.mkdirSync(path.dirname(file), { recursive: true });
-  fs.writeFileSync(file + '.tmp', JSON.stringify(next, null, 2) + '\n');
-  fs.renameSync(file + '.tmp', file);
-}
 
 const home = (...p) => path.join(os.homedir(), ...p);
 const hermesHome = () =>
@@ -508,27 +508,6 @@ const agentDir = (id) =>
     hermes: hermesHome(),
   })[id];
 
-/** Back up, transform and atomically rewrite an agent's config file. Never overwrites a file it can't read. */
-function editConfig(file, transform, json = true) {
-  let text = '';
-  if (fs.existsSync(file)) {
-    text = fs.readFileSync(file, 'utf8').replace(/^﻿/, '');
-    if (!fs.existsSync(file + '.orbit-backup')) fs.copyFileSync(file, file + '.orbit-backup'); // keep the original
-  }
-  let data = text;
-  if (json) {
-    try {
-      data = text ? JSON.parse(text) : {};
-    } catch {
-      throw new Error(`couldn't read ${file}, so Orbit left it unchanged`);
-    }
-  }
-  const next = transform(data);
-  fs.mkdirSync(path.dirname(file), { recursive: true });
-  fs.writeFileSync(file + '.tmp', json ? JSON.stringify(next, null, 2) + '\n' : next);
-  fs.renameSync(file + '.tmp', file);
-}
-
 /** Add or remove Orbit's hooks for one agent, touching only Orbit's own entries. */
 function installAgentHooks(id, on) {
   const script = bridgePath();
@@ -540,11 +519,11 @@ function installAgentHooks(id, on) {
   };
   const shared = (file, add, remove, json = true) => {
     if (!on && !fs.existsSync(file)) return;
-    editConfig(file, (c) => (on ? add(c, script) : remove(c)), json);
+    aw.editConfig(file, (c) => (on ? add(c, script) : remove(c)), json);
   };
   switch (id) {
-    case 'claude':
-      return installClaudeHooks(on);
+    case 'claude': // Claude Code posts straight to Orbit's URL, no bridge script
+      return shared(claudeSettingsPath(), (c) => aw.withOrbitHooks(c, claudeUrl()), aw.withoutOrbitHooks);
     case 'codex':
       return shared(home('.codex', 'hooks.json'), aw.withCodexHooks, aw.withoutCodexHooks);
     case 'antigravity':
@@ -627,6 +606,17 @@ ipcMain.on('menu:show', () => {
     brain?.mode === 'sleep'
       ? { label: 'Wake up', click: () => brain?.interact() }
       : { label: 'Take a nap', click: () => brain?.sleepNow() },
+    {
+      label: brain?.form === 'mech' ? 'Fold back to Orbit' : 'Transform to AeroStrike',
+      enabled: !brain?.morph,
+      click: () => brain?.transform(undefined, true),
+    },
+    {
+      label: 'Defence mode (AeroStrike)',
+      type: 'checkbox',
+      checked: brain?.defence ?? false,
+      click: (item) => brain?.setDefence(item.checked),
+    },
     {
       label: 'Do a trick',
       submenu: STUNTS.map((s) => ({ label: STUNT_LABELS[s], click: () => brain?.stunt(s, true) })),

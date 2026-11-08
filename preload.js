@@ -11,6 +11,8 @@ contextBridge.exposeInMainWorld('orbit', {
   appsInfo: () => ipcRenderer.invoke('apps:info'),
   rescanApps: () => ipcRenderer.invoke('apps:rescan'),
   stunt: (name) => ipcRenderer.send('orb:stunt', name),
+  transform: (form) => ipcRenderer.send('orb:transform', form),
+  setDefence: (on) => ipcRenderer.send('orb:defence', on),
   setSkin: (name) => ipcRenderer.send('orb:setSkin', name),
   onSkin: (cb) => ipcRenderer.on('orb:skin', (_e, name) => cb(name)),
   onClaudeEvent: (cb) => ipcRenderer.on('claude:event', (_e, r) => cb(r)),

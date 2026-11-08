@@ -31,6 +31,8 @@ It speaks **99 languages** (including English and Tamil), opens any app on your 
 - **Watches your AI coding agents**: Claude Code, Codex, GitHub Copilot CLI, OpenCode, Antigravity and Hermes. It
   tells you live when one needs you, finishes or hits an error, and lets you click Allow / Deny where the agent
   supports it (see below).
+- **Transforms into AeroStrike**: Orbit unfolds into a winged aerial combat mech, part by part, with servo and
+  clank sounds and glowing thrusters (see below).
 - **Five skins**: Metallic, Leather, Matte, Velvet and a holographic Crazy skin (see below).
 - **Your choice of voice and devices**: 30 Gemini voices, pick your microphone and speaker in Settings.
 - **Private by design**: your API key is stored encrypted on your PC, and chat logs never leave it.
@@ -50,6 +52,30 @@ It speaks **99 languages** (including English and Tamil), opens any app on your 
 
 Feelings fade on their own, so Orbit drifts back to calm. Right-click shows its current mood. The mood also sets
 Gemini's tone at the start of each conversation.
+
+### AeroStrike
+
+Say "transform!" (or "suit up", "battle mode"), or right-click → **Transform to AeroStrike**. Orbit's window grows,
+then its body unfolds over about 3 seconds: legs, chest plates, arms, shoulder turbines, head, backpack and finally
+the wings fan out and a blade slides out of the right forearm, each part clanking into place. Orbit's face becomes
+a glowing power core in the chest. Sometimes it transforms on its own after a journey, and folds back after a few
+minutes. Say "fold back" or use right-click → **Fold back to Orbit** to return to small Orbit.
+
+**Defence mode**: say "defence mode" (or "guard yourself") or tick right-click → **Defence mode (AeroStrike)**.
+AeroStrike transforms if needed, stops roaming and takes a fighter's stance, fists up and glowing hotter. Every
+left-click on it is fended off with a random move, done like a person would: a flinch, then a forearm block, a
+chambered side kick toward the click (leaning back to keep its balance) or a red laser fired from the chest core
+at the cursor, and the impact rocks it back before it settles. Right-click it to turn defence off again.
+
+The mech is modelled in [Blender](https://www.blender.org/) by a script, so it can be changed and rebuilt:
+
+```bash
+blender -b -P tools/aerostrike.py
+```
+
+This writes `renderer/models/aerostrike.glb.js`. Add `-- --blend` to also save `tools/aerostrike.blend` to look
+around in Blender. Each module (head, chest, shoulders, arms, legs, backpack, wings, blade) is a named object that
+Orbit animates on its own.
 
 ### Skins
 
@@ -112,6 +138,7 @@ Everything around the robot is click-through, so it never blocks the windows und
 - "Open Blender" / "Open Calculator"
 - "Do a backflip!" / "Show me a loop-the-loop"
 - "Wear your leather skin" / "Go crazy!"
+- "Transform!" / "Fold back"
 
 **Apps it can open:** anything in your Start menu (found automatically, refresh with Settings → Rescan), plus Chrome,
 Edge, Brave, Notepad, Calculator, File Explorer, Paint, Settings, Task Manager, Command Prompt, VS Code, Spotify,
@@ -198,6 +225,10 @@ OpenClaw) can be added the same way.
 | ------------------------------------- | -------------------------------------------------------------------- |
 | `main.js`                             | Windows, hotkey, menu, settings storage (encrypted key)              |
 | `brain.js`                            | Roaming, mouse dodging, naps, daily routine, click-through           |
+| `form.js`                             | Window sizes for small Orbit and AeroStrike                          |
+| `renderer/mech.js`, `sfx.js`          | The AeroStrike mech, its transformation and sounds                   |
+| `renderer/flip.js`, `defend.js`       | AeroStrike's stunts and defence moves (body physics)                 |
+| `tools/aerostrike.py`                 | Blender script that models AeroStrike (→ `renderer/models/`)         |
 | `mood.js`                             | Orbit's moods: what raises each feeling, how fast it fades           |
 | `agent-watch.js`                      | AI agent events → alerts, secret hiding, each agent's hook entries   |
 | `renderer/approve.*`                  | The Allow / Deny card for agents' permission requests                |

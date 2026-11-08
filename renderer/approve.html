@@ -51,9 +51,13 @@
         background: #1c1c28;
         border-radius: 6px;
         padding: 5px 7px;
-        white-space: nowrap;
+        /* the whole command, wrapped (agent-watch.js keeps it to 3 lines, or marks it partial) */
+        white-space: normal;
+        word-break: break-all;
         overflow: hidden;
-        text-overflow: ellipsis;
+      }
+      [hidden] {
+        display: none;
       }
       .actions {
         display: flex;

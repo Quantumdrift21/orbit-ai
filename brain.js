@@ -2,10 +2,10 @@
 // lets a slow hand "catch" it, naps when nobody needs it, and follows a daily rhythm.
 const { screen } = require('electron');
 const moods = require('./mood');
+const { TRANSFORM_SECS, LAYOUTS, moveFor } = require('./form');
 
 const now = () => performance.now() / 1000;
 // Clickable area around the robot's centre (px, half-width / half-height) – body plus arm-orbs.
-const HIT = { x: 68, y: 58 };
 const rand = (a, b) => a + Math.random() * (b - a);
 const clamp = (v, a, b) => Math.max(a, Math.min(b, v));
 
@@ -30,6 +30,7 @@ const RHYTHM = {
 // 'loop' also flies the window around a circle so the whole robot does a loop-the-loop.
 const STUNT_SECS = { spin: 1.1, flip: 1.0, roll: 1.2, loop: 1.8 };
 const STUNTS = Object.keys(STUNT_SECS);
+const MECH_FLIP_SECS = 1.9; // AeroStrike's flip, roll and spin: crouch, jump, tuck, land (renderer/flip.js)
 const LOOP_RADIUS = 70; // px
 const easeInOut = (p) => (p < 0.5 ? 4 * p * p * p : 1 - Math.pow(-2 * p + 2, 3) / 2);
 
@@ -45,8 +46,13 @@ class Brain {
     this.pos = { x, y };
     // setPosition() on scaled displays slowly grows the window (Electron bug) – always
     // move with setBounds() and this fixed size instead.
-    const [w, h] = win.getContentSize();
-    this.size = { width: w, height: h };
+    this.layout = LAYOUTS.orb; // window size, robot anchor and clickable area (see form.js)
+    this.size = this.layout.size;
+    this.form = 'orb'; // 'orb' | 'mech' (AeroStrike)
+    this.formP = 0; // 0..1, sent to the robot page
+    this.morph = null; // a transformation in progress
+    this.defence = false; // AeroStrike on guard: holds its ground and fends off clicks (robot page)
+    this.mechUntil = Infinity; // when a self-started AeroStrike folds back
     this.vel = { x: 0, y: 0 };
     this.mode = 'rest';
     this.until = now() + rand(3, 6);
@@ -110,8 +116,44 @@ class Brain {
   stunt(name, byUser = false) {
     if (!STUNTS.includes(name) || this.trick || this.dragging) return;
     if (this.mode === 'sleep' || this.mode === 'toBed') this.wake();
-    this.trick = { name, start: now(), dur: STUNT_SECS[name], origin: { ...this.pos } };
+    const gymnast = ['flip', 'roll', 'spin'].includes(name) && this.form === 'mech';
+    const dur = gymnast ? MECH_FLIP_SECS : STUNT_SECS[name];
+    this.trick = { name, start: now(), dur, origin: { ...this.pos } };
     if (byUser) this.feel('trick');
+  }
+  /**
+   * Transform into AeroStrike ('mech') or back to Orbit ('orb'); no target = switch.
+   * The window grows first so the mech has room. Self-started transformations fold back later.
+   */
+  transform(target, byUser = false) {
+    const toMech = target ? target === 'mech' : this.form === 'orb';
+    if (this.morph || this.dragging || this.form === (toMech ? 'mech' : 'orb')) return;
+    if (toMech && (this.mode === 'sleep' || this.mode === 'toBed')) this.wake(); // folding back lets it nap on
+    if (!toMech) this.defence = false;
+    this.setLayout(LAYOUTS.grown);
+    this.morph = { to: toMech ? 1 : 0, start: now() };
+    this.flash(toMech ? 'morph:up' : 'morph:down', 0.6); // the robot page plays the sounds
+    this.mechUntil = byUser ? Infinity : now() + rand(90, 240);
+    if (byUser) this.feel('trick');
+  }
+  /** Defence mode: only as AeroStrike, so turning it on transforms; folding back turns it off. */
+  setDefence(on) {
+    this.defence = !!on;
+    if (!on) return;
+    this.interact();
+    if (this.mode === 'journey') this.mode = 'rest'; // stop and stand its ground
+    this.transform('mech', true); // no-op if it already is AeroStrike
+  }
+  /** Switch window layout, keeping the robot on the same spot on screen. */
+  setLayout(to) {
+    if (to === this.layout) return;
+    this.syncPos();
+    this.pos = moveFor(this.pos, this.layout, to);
+    this.layout = to;
+    this.anchor = to.anchor;
+    this.size = to.size;
+    if (!this.win.isDestroyed())
+      this.win.setBounds({ x: Math.round(this.pos.x), y: Math.round(this.pos.y), ...this.size });
   }
   /** A mood event: 'talk' | 'attention' | 'trick' | 'morning' | 'dodge' (amount = seconds). */
   feel(event, amount = 1) {
@@ -163,6 +205,7 @@ class Brain {
   }
 
   goToBed() {
+    if (this.form === 'mech') this.transform('orb'); // naps as small Orbit
     const wa = this.workArea();
     this.target = this.home || { x: wa.x + wa.width - 110, y: wa.y + wa.height - 120 };
     this.mode = 'toBed';
@@ -207,9 +250,24 @@ class Brain {
     let desired = { x: 0, y: 0 };
     let steer = 2.2;
 
+    if (this.morph) {
+      const p = Math.min(1, (t - this.morph.start) / TRANSFORM_SECS);
+      this.formP = this.morph.to ? p : 1 - p;
+      if (p >= 1) {
+        this.form = this.morph.to ? 'mech' : 'orb';
+        this.morph = null;
+        this.setLayout(this.form === 'mech' ? LAYOUTS.mech : LAYOUTS.orb);
+        // asked for mid-transformation (then ignored): defence only exists as AeroStrike, naps as Orbit
+        if (this.form === 'orb') this.defence = false;
+        else if (this.mode === 'toBed' || this.mode === 'sleep') this.transform('orb');
+      }
+    }
+
     let trick = null; // progress sent to the robot page
     if (this.trick && this.dragging) this.trick = null;
-    if (this.trick) {
+    if (this.morph && !this.trick) {
+      steer = 6; // hold still while the parts move
+    } else if (this.trick) {
       // A stunt runs even mid-conversation (Gemini can ask for one); nothing else steers meanwhile.
       const p = (t - this.trick.start) / this.trick.dur;
       steer = 6;
@@ -230,8 +288,10 @@ class Brain {
       steer = 6;
       // Roam off but nobody talking/dragging: it can't fly, so it naps (and wakes) in place.
       const parked = !this.enabled && !this.busy && !this.dragging && t >= this.pausedUntil;
-      const napDue = this.mode === 'toBed' || (this.mode !== 'sleep' && t - this.lastInteraction > sleepAfter);
+      const napDue =
+        !this.defence && (this.mode === 'toBed' || (this.mode !== 'sleep' && t - this.lastInteraction > sleepAfter));
       if (parked && napDue) {
+        if (this.form === 'mech') this.transform('orb'); // naps as small Orbit, like goToBed
         this.mode = 'sleep';
         this.until = t + rand(...rhythm.nap);
       } else if (this.mode === 'journey' || this.mode === 'toBed') {
@@ -243,12 +303,17 @@ class Brain {
         this.wake();
       }
     } else {
-      if (this.mode !== 'sleep' && this.mode !== 'toBed' && t - this.lastInteraction > sleepAfter) this.goToBed();
+      // on guard it never dozes off, wanders, dodges or does tricks of its own: it holds its ground
+      const guard = this.defence;
+      if (!guard && this.mode !== 'sleep' && this.mode !== 'toBed' && t - this.lastInteraction > sleepAfter)
+        this.goToBed();
 
       switch (this.mode) {
         case 'rest':
           desired = { x: Math.sin(t * 0.7) * 10, y: Math.sin(t * 1.1) * 7 };
-          if (t > this.until) this.decide(rhythm);
+          if (guard) break;
+          if (this.form === 'mech' && !this.morph && !this.busy && t > this.mechUntil) this.transform('orb');
+          else if (t > this.until) this.decide(rhythm);
           break;
         case 'journey':
         case 'toBed': {
@@ -267,8 +332,10 @@ class Brain {
             } else {
               this.mode = 'rest';
               this.until = t + rand(...rhythm.rest);
-              if (Math.random() < rhythm.trick * fx.trick)
-                this.stunt(STUNTS[Math.floor(Math.random() * STUNTS.length)]);
+              const roll = Math.random();
+              if (guard) break;
+              if (roll < rhythm.trick * fx.trick) this.stunt(STUNTS[Math.floor(Math.random() * STUNTS.length)]);
+              else if (this.form === 'orb' && roll < rhythm.trick * fx.trick * 1.3) this.transform('mech'); // now and then
             }
           }
           break;
@@ -283,7 +350,7 @@ class Brain {
       }
 
       // Mouse: a fast swipe makes it dodge; a slow approach lets you catch it.
-      if (this.mode !== 'sleep' && dist < 160) {
+      if (!guard && this.mode !== 'sleep' && dist < 160) {
         if (this.cursorSpeed > 650) {
           const f = (160 - dist) / 160;
           desired.x += (dx / dist) * 1100 * f;
@@ -328,8 +395,9 @@ class Brain {
     // Click-through: only the robot itself catches the mouse. Checked here (not on mousemove in
     // the page) because the window often moves under a cursor that is standing still.
     const nc = this.center();
-    const hx = (m.x - nc.x) / HIT.x;
-    const hy = (m.y - nc.y) / HIT.y;
+    const hit = this.layout.hit;
+    const hx = (m.x - (this.pos.x + hit.x)) / hit.rx;
+    const hy = (m.y - (this.pos.y + hit.y)) / hit.ry;
     const over = this.dragging || hx * hx + hy * hy < 1;
     if (over !== this.over) {
       this.over = over;
@@ -346,6 +414,8 @@ class Brain {
       event: this.event,
       trick,
       mood: this.mood,
+      form: +this.formP.toFixed(3),
+      defence: this.defence,
       hover: over,
       look: { x: +((m.x - nc.x) / 500).toFixed(3), y: +((m.y - nc.y) / 500).toFixed(3) },
     });

@@ -40,6 +40,7 @@
       "actions.js",
       "brain.js",
       "mood.js",
+      "form.js",
       "agent-watch.js",
       "preload.js",
       "renderer/**/*"

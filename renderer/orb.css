@@ -78,3 +78,9 @@ body {
 #status.error {
   background: rgba(120, 20, 30, 0.75);
 }
+
+/* AeroStrike: bigger window, caption under the mech's feet */
+body.big #caption {
+  top: auto;
+  bottom: 34px;
+}

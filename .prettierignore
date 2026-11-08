@@ -1,3 +1,4 @@
 dist/
 renderer/vendor/
 package-lock.json
+renderer/models/

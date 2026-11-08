@@ -12,7 +12,9 @@ function render() {
   $('project').textContent = card.project;
   $('title').textContent = `${card.who || 'Claude'} wants to use ${card.tool}`;
   $('detail').textContent = card.detail;
-  $('detail').title = card.detail;
+  // Cut short or partly hidden: it can't be checked here, so only Deny or the terminal.
+  $('allow').hidden = !!card.partial;
+  $('terminal').textContent = card.partial ? 'Check in terminal' : 'Use terminal';
   $('count').textContent = `${card.of > 1 ? `1 of ${card.of} · ` : ''}${left}s`;
 }
 

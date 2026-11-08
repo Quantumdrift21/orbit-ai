@@ -2,6 +2,8 @@ import { Robot, SKIN_NAMES } from './robot.js';
 import { Mic, Player } from './audio.js';
 import { GeminiLive } from './gemini.js';
 import { languageRule } from './languages.js';
+import { playTransform, playDefend } from './sfx.js';
+import { DEFENCES, DEFENCE_SECS } from './defend.js';
 
 const canvas = document.getElementById('orb');
 const statusEl = document.getElementById('status');
@@ -73,6 +75,29 @@ const TOOLS = [
         },
       },
       {
+        name: 'transform',
+        description:
+          'Transform your robot body: into AeroStrike, an aerial combat mech with wings ("transform", "suit up", ' +
+          '"battle mode"), or back into small Orbit ("fold back", "go small").',
+        parameters: {
+          type: 'OBJECT',
+          properties: { form: { type: 'STRING', enum: ['aerostrike', 'orbit'] } },
+          required: ['form'],
+        },
+      },
+      {
+        name: 'defence_mode',
+        description:
+          'Turn AeroStrike defence mode on or off ("defence mode", "guard yourself", "defend", "stand down"). ' +
+          'On: you transform into AeroStrike if needed, take a fighting stance and fend off every mouse click ' +
+          'with a block, a kick or a red laser from your core. The user right-clicks you to turn it off.',
+        parameters: {
+          type: 'OBJECT',
+          properties: { on: { type: 'BOOLEAN' } },
+          required: ['on'],
+        },
+      },
+      {
         name: 'change_skin',
         description:
           "Change your robot body's skin when the user asks: metallic (brushed silver), leather (stitched brown), " +
@@ -106,7 +131,7 @@ const TOOLS = [
 ];
 
 const ACTION_RULE =
-  'PC ACTIONS: You can open apps (open_app) and websites (open_website), do flying tricks (do_trick) and ' +
+  'PC ACTIONS: You can open apps (open_app) and websites (open_website), do flying tricks (do_trick), transform into AeroStrike (transform), switch defence mode (defence_mode) and ' +
   'change your skin (change_skin). ' +
   'Only say something was opened after the tool returns ok:true; if it fails, say so. ' +
   'If the result has a "note", tell the user that note briefly. ' +
@@ -250,7 +275,9 @@ async function ensureLive() {
     },
     onToolCall: async (calls) => {
       turnDone = false;
-      const tricksOnly = calls.every((fc) => fc.name === 'do_trick' || fc.name === 'change_skin');
+      const tricksOnly = calls.every((fc) =>
+        ['do_trick', 'change_skin', 'transform', 'defence_mode'].includes(fc.name),
+      );
       const label = calls.every((fc) => fc.name === 'agent_status') ? 'Checking agents…' : 'Opening…';
       if (state !== 'speaking') setState('thinking', tricksOnly ? 'Showing off…' : label);
       const responses = [];
@@ -260,6 +287,14 @@ async function ensureLive() {
           const trick = TRICKS[fc.args?.trick] ? fc.args.trick : 'spin';
           window.orbit.stunt(trick);
           result = { ok: true, did: TRICKS[trick] };
+        } else if (fc.name === 'transform') {
+          const form = fc.args?.form === 'orbit' ? 'orb' : 'mech';
+          window.orbit.transform(form);
+          result = { ok: true, form: form === 'mech' ? 'AeroStrike' : 'Orbit' };
+        } else if (fc.name === 'defence_mode') {
+          const on = fc.args?.on !== false;
+          window.orbit.setDefence(on);
+          result = { ok: true, defence: on ? 'on' : 'off' };
         } else if (fc.name === 'agent_status') {
           result = watchingAgents() ? await window.orbit.claudeStatus() : { ok: false, error: 'Not watching' };
         } else if (fc.name === 'change_skin') {
@@ -402,10 +437,22 @@ async function toggle() {
 
 // ---------- click to talk, drag to move, right-click for menu ----------
 // (The main process makes everything except the robot click-through.)
+// Defence mode (AeroStrike only): left clicks don't get through — it fends each one off with a
+// random move (block, kick or core laser); a right-click turns defence off again.
 let press = null;
+let guarding = false; // from the brain's motion updates
 
 canvas.addEventListener('pointerdown', (e) => {
   if (e.button !== 0) return;
+  if (guarding) {
+    const r = canvas.getBoundingClientRect();
+    const nx = ((e.clientX - r.left) / r.width) * 2 - 1;
+    const ny = 1 - ((e.clientY - r.top) / r.height) * 2;
+    const kind = DEFENCES[Math.floor(Math.random() * DEFENCES.length)];
+    if (orb.defend(kind, nx, ny)) playDefend(player.ctx, kind, DEFENCE_SECS[kind]);
+    window.orbit.interact();
+    return;
+  }
   canvas.setPointerCapture(e.pointerId);
   press = { x: e.screenX, y: e.screenY, lastX: e.screenX, lastY: e.screenY, dragging: false };
 });
@@ -436,7 +483,14 @@ canvas.addEventListener('pointerup', () => {
 });
 
 // The roaming brain (main process) reports flight, sleep, mouse position and hover.
+let lastEvent = null;
 window.orbit.onMotion((m) => {
+  // Transformation sounds start with the brain's one-off morph event.
+  if (m.event !== lastEvent && (m.event === 'morph:up' || m.event === 'morph:down')) {
+    playTransform(player.ctx, m.event === 'morph:up');
+  }
+  lastEvent = m.event;
+  guarding = !!m.defence && m.form > 0.9;
   mood = m.mood || 'calm';
   orb.setMotion(m);
   orb.setLook(m.look.x, m.look.y);
@@ -445,6 +499,14 @@ window.orbit.onMotion((m) => {
 });
 window.addEventListener('contextmenu', (e) => {
   e.preventDefault();
+  if (guarding) {
+    guarding = false; // stand down at once; the brain confirms on its next update
+    window.orbit.setDefence(false);
+    window.orbit.interact();
+    showCaption('Defence off');
+    captionTimer = setTimeout(() => captionEl.classList.remove('show'), 2500);
+    return;
+  }
   window.orbit.showMenu();
 });
 
@@ -468,4 +530,7 @@ window.orbit.onConfigChanged(async () => {
   if (state === 'idle' || state === 'error') setState('idle');
 });
 
+const markSize = () => document.body.classList.toggle('big', window.innerHeight > 300);
+window.addEventListener('resize', markSize);
+markSize();
 setState('idle');

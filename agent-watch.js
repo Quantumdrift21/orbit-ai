@@ -2,7 +2,9 @@
 // Orbit's local listener; the other agents run Orbit's bridge script (orbit-hook.ps1) or plugin,
 // which forwards their events. This module translates each agent's events into one common shape,
 // turns them into short alerts, hides secrets, and builds the hook entries Orbit adds to each
-// agent's config. Pure functions, tested in test/agent-watch.test.js.
+// agent's config. Pure functions (plus editConfig, the one safe way to rewrite an agent's config
+// file), tested in test/agent-watch.test.js.
+const fs = require('fs');
 const path = require('path');
 
 const PORT = 47821;
@@ -62,11 +64,35 @@ const clip = (s, n) => {
   return t.length > n ? t.slice(0, n - 1) + '…' : t;
 };
 
-/** The useful part of a tool call for the approval card (command, file or URL), secret-filtered. */
-function toolDetail(tool, input) {
+const DETAIL_KEYS = ['command', 'file_path', 'url', 'pattern', 'description'];
+
+/** The useful part of a tool call: its command, file or URL (key = which field), else the whole input as JSON. */
+function rawDetail(input) {
   input = input && typeof input === 'object' ? input : {};
-  const raw = input.command ?? input.file_path ?? input.url ?? input.pattern ?? input.description;
-  return clip(hideSecrets(raw ?? JSON.stringify(input)), 160);
+  const key = DETAIL_KEYS.find((k) => input[k] != null);
+  return { key, input, text: String(key ? input[key] : JSON.stringify(input)) };
+}
+
+/** A tool call in one secret-filtered line, for history and the spoken summary. */
+const toolDetail = (tool, input) => clip(hideSecrets(rawDetail(input).text), 160);
+
+// What fits on the approval card (3 wrapped lines of its monospace text).
+const CARD_CHARS = 100;
+
+/**
+ * The approval card's text. partial = the card can't show everything the tool would do — cut
+ * short, something hidden as a secret, or other fields it doesn't show (a Write's content, an
+ * Edit's new text) — so it must not offer Allow (only Deny or answering in the terminal).
+ */
+function approvalDetail(tool, input) {
+  const { key, input: all, text } = rawDetail(input);
+  const full = text.replace(/\s+/g, ' ').trim();
+  const shown = hideSecrets(full);
+  // a description or a number/flag (timeout, run_in_background) can't change what runs
+  const unseen = Object.entries(all).some(
+    ([k, v]) => k !== key && k !== 'description' && v != null && v !== '' && !['number', 'boolean'].includes(typeof v),
+  );
+  return { text: clip(shown, CARD_CHARS), partial: unseen || shown !== full || full.length > CARD_CHARS };
 }
 
 /** First sentence of the agent's reply, without markdown, for "Claude finished: …". */
@@ -214,6 +240,45 @@ function withoutHermesHooks(yaml) {
   const before = s.slice(0, a).replace(/\s*$/, '');
   const after = s.slice(b + HERMES_END.length).replace(/^\s*/, '');
   return `${before}\n${after ? `\n${after}` : ''}`.replace(/\n+$/, '\n');
+}
+
+/**
+ * Back up, transform and atomically rewrite an agent's config file. Never overwrites a file it
+ * can't read; the first original is kept as <file>.orbit-backup. json = false: plain text.
+ */
+function editConfig(file, transform, json = true) {
+  let text = '';
+  if (fs.existsSync(file)) {
+    text = fs.readFileSync(file, 'utf8').replace(/^﻿/, '');
+    if (!fs.existsSync(file + '.orbit-backup')) fs.copyFileSync(file, file + '.orbit-backup'); // keep the original
+  }
+  let data = text;
+  if (json) {
+    try {
+      data = text ? JSON.parse(text) : {};
+    } catch {
+      throw new Error(`couldn't read ${file}, so Orbit left it unchanged`);
+    }
+  }
+  const next = transform(data);
+  writeAtomic(file, json ? JSON.stringify(next, null, 2) + '\n' : next);
+}
+
+/**
+ * Write a copy, then swap it in, so a crash mid-write never leaves a cut-off file. Windows can
+ * refuse the swap for a moment while antivirus or the search indexer has the file open: retry.
+ */
+function writeAtomic(file, text) {
+  fs.mkdirSync(path.dirname(file), { recursive: true });
+  fs.writeFileSync(file + '.tmp', text);
+  for (let i = 0; ; i++) {
+    try {
+      return fs.renameSync(file + '.tmp', file);
+    } catch (e) {
+      if (i >= 5 || !['EPERM', 'EBUSY', 'EACCES'].includes(e.code)) throw e;
+      Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 40 * (i + 1)); // short blocking pause
+    }
+  }
 }
 
 // ---------- approval replies ----------
@@ -470,6 +535,7 @@ module.exports = {
   NEEDS_OWN_ANSWER,
   hideSecrets,
   toolDetail,
+  approvalDetail,
   withOrbitHooks,
   withoutOrbitHooks,
   withCodexHooks,
@@ -481,6 +547,8 @@ module.exports = {
   withHermesHooks,
   withoutHermesHooks,
   hookCommand,
+  editConfig,
+  writeAtomic,
   decision,
   reply,
   normalize,

@@ -14,3 +14,9 @@ logs/
 .vscode/
 .idea/
 Thumbs.db
+tools/*.blend
+tools/*.blend1
+
+# Generated code maps (graphify, Understand Anything)
+graphify-out/
+.ua/
