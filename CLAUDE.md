@@ -84,6 +84,11 @@ limb segment relative to its parent. Hands are their own pivots (`handR`/`handL`
 `hand<R|L>F<finger><joint>` from the Blender model, curled by quaternion from their rest pose; wing feathers are
 `<wing>F0..F5`, matching `FEATHERS` in mech.js.
 
+**Postures and face cards.** `renderer/postures.js` returns additive joint angles (stance, taunt, sleep), blended in
+`robot.js` and applied by mech.js `hold()` after the follow-through; a posture's `grip` overrides the resting hand
+shape. AeroStrike now naps as itself (brain.js no longer folds it to Orbit). `renderer/faceCard.js` draws cards
+(agent icon, emoji, text) on the face canvas; `robot.showCard(card, secs)` takes over `#drawFace` until it expires.
+
 **Transparent window gotcha:** glow sprites use `lightBlend`, which adds colour but never writes alpha, so it is
 invisible over empty (transparent) parts of the window. Anything that must show over the desktop (e.g. the laser
 beam) needs normal alpha blending.
@@ -127,3 +132,9 @@ the key when a new `apiKey` is passed (a key from the env var is never written).
 new root-level module must be added there or the installed app won't find it. `onnxruntime-node` (Kokoro) is in
 `asarUnpack` because native modules can't load from the asar. Keep the README's project-layout table in step with
 new files.
+
+**Wake word and transformation effects.** `wake.js` (main) runs Whisper tiny.en via `@huggingface/transformers` on
+short clips cut by `renderer/wakeword.js` (energy-based segmenter, `isWake`); the wake mic only runs while idle and
+`cfg.activation` is `wake`/`both`, and the hotkey isn't registered for `wake`. Both offline models read from
+`userData/models` with `env.localModelPath` + `allowLocalModels` (allowRemoteModels only for the Settings download).
+`renderer/morphFx.js` draws the transformation effects (normal blending), keyed off the morph progress only.

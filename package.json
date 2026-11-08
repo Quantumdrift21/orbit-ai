@@ -47,6 +47,7 @@
       "browser.js",
       "browser-rules.js",
       "voice.js",
+      "wake.js",
       "mcp.js",
       "agent-watch.js",
       "preload.js",

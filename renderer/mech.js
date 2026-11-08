@@ -397,6 +397,7 @@ export function buildMech(kit) {
       def = null,
       joints: J = null,
       flinch = 0,
+      posture = null,
     } = {},
   ) {
     if (!group.visible) return;
@@ -418,36 +419,59 @@ export function buildMech(kit) {
     //   chin down — open out, land soft
     // - spin: a skater's jump spin — arms thrown wide, then pulled in tight in front of the chest with
     //   the legs together (spinning faster), opened to slow down, land soft
-    // - loop: a superhero loop — fists out ahead, legs straight back, one knee bent, head up
-    const { style, tuck = 0, crouch = 0, reach = 0, stretch = 0 } = pose ?? {};
+    // - loop: a superhero loop — one fist punches ahead and the other follows a beat later (bent at
+    //   first), legs trail with a flutter, back arches and head looks into the turn, wings swept back
+    const {
+      style,
+      tuck = 0,
+      crouch = 0,
+      reach = 0,
+      stretch = 0,
+      lead = 0,
+      follow: after = 0,
+      arch = 0,
+      flutter = 0,
+    } = pose ?? {};
+    const looping = style === 'loop';
     const ball = style === 'flip' || style === 'roll'; // tuck = knees to chest
     const skater = style === 'spin'; // tuck = arms in tight, legs together
     legs.forEach((l, i) => {
       const side = i === 0 ? -1 : 1;
-      l.rotation.x -= (ball ? 2.1 * tuck : 0) + 0.75 * crouch - 0.15 * stretch;
+      l.rotation.x -= (ball ? 2.1 * tuck : 0) + 0.75 * crouch - 0.15 * stretch - 0.3 * arch;
       if (skater) l.rotation.z -= side * 0.12 * tuck;
-      l.userData.shin.rotation.x = (ball ? 2.4 : 0.15) * tuck + 1.5 * crouch + (i === 0 ? 0.8 : 0.1) * stretch;
+      const kick = looping ? (i === 0 ? 1 : -1) * 0.22 * flutter : 0; // legs flutter against each other
+      l.userData.shin.rotation.x =
+        (ball ? 2.4 : 0.15) * tuck + 1.5 * crouch + ((i === 0 ? 0.8 : 0.15) + kick) * stretch;
     });
     arms.forEach((a, i) => {
       const side = i === 0 ? -1 : 1;
       const up = Math.max(0, reach);
       if (style === 'flip') a.rotation.x -= 2.9 * up;
       else a.rotation.z += side * (skater ? 1.3 : 2.6) * up;
-      a.rotation.x -= 0.7 * Math.min(0, reach) + (skater ? 1.3 : 0.55) * tuck + 2.9 * stretch;
-      a.rotation.z -= side * ((skater ? 0.3 : 0.5) * tuck + 0.15 * stretch); // hands in
-      a.userData.fore.rotation.x = -(skater ? 1.2 : 0.45) * tuck - 0.3 * crouch;
+      const punch = looping ? (i === 1 ? lead : after) : stretch; // the left fist leads the loop
+      a.rotation.x -= 0.7 * Math.min(0, reach) + (skater ? 1.3 : 0.55) * tuck + 2.9 * punch;
+      a.rotation.z -= side * ((skater ? 0.3 : 0.5) * tuck + 0.15 * punch); // hands in
+      const bent = looping ? 0.9 * Math.max(0, stretch - after) : 0; // the following arm straightens late
+      a.userData.fore.rotation.x = -(skater ? 1.2 : 0.45) * tuck - 0.3 * crouch - bent;
     });
-    head.rotation.x += (ball ? 0.4 : 0) * tuck - 0.3 * stretch;
-    for (const w of wings) w.rotation.x -= 0.5 * tuck; // wings sweep back, out of the way
+    head.rotation.x += (ball ? 0.4 : 0) * tuck - 0.3 * stretch - 0.25 * arch;
+    for (const w of wings) {
+      w.rotation.x -= 0.5 * tuck + 0.55 * stretch; // wings sweep back, out of the way
+      w.rotation.z -= 0.3 * arch;
+    }
     defend(t, guard, def);
     follow(J, flinch);
+    if (posture) hold(posture);
     // hands: relaxed and a little curled at rest (like ours), fists on guard, in a block, wrapping the
     // shins in a tuck and leading a superhero loop; open in the laser brace; a quick clench on a flinch
     const d = def ?? {};
     arms.forEach((a, i) => {
       const near = d.side < 0 ? i === 0 : i === 1;
       const fist = Math.max(guard, (near ? d.guard : d.guardOff) ?? 0, ball ? tuck : 0, stretch, flinch * 0.8);
-      const grip = clamp01(0.28 + 0.72 * fist - 0.3 * (d.open ?? 0)) + Math.sin(t * 0.7 + i * 2) * 0.03;
+      const own = posture?.arms[i].grip; // a posture's own hand shape (open palm, folded arms, asleep)
+      const grip =
+        (own != null && fist < 0.3 ? own : clamp01(0.28 + 0.72 * fist - 0.3 * (d.open ?? 0))) +
+        Math.sin(t * 0.7 + i * 2) * 0.03;
       a.userData.hand.userData.fingers.forEach((segs, f) => {
         const curl = f === 4 ? grip * 0.55 : grip * (1 + 0.06 * f);
         segs.forEach((o, k) =>
@@ -455,6 +479,30 @@ export function buildMech(kit) {
         );
       });
     });
+  }
+
+  /** A posture from renderer/postures.js (stance, taunt, sleep): added on top of everything else. */
+  function hold(P) {
+    arms.forEach((a, i) => {
+      const A = P.arms[i];
+      a.rotation.x += A.x;
+      a.rotation.z += A.z;
+      a.userData.fore.rotation.x += A.fore;
+      a.userData.fore.rotation.z += A.foreZ;
+    });
+    legs.forEach((l, i) => {
+      const L = P.legs[i];
+      l.rotation.x += L.x;
+      l.rotation.z += L.z;
+      l.userData.shin.rotation.x += L.knee;
+    });
+    head.rotation.x += P.head.x;
+    head.rotation.y += P.head.y;
+    head.rotation.z += P.head.z;
+    for (const w of wings) {
+      w.rotation.x += P.wings.x;
+      w.rotation.z += P.wings.z;
+    }
   }
 
   const bend = new THREE.Quaternion();

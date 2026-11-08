@@ -78,9 +78,18 @@ agent's transcript.
   supports it (see below).
 - **Transforms into AeroStrike**: Orbit unfolds into a winged aerial combat mech, part by part, with servo and
   clank sounds and glowing thrusters (see below).
+  A flash, a shockwave and a glowing energy cocoon wrap it while the parts form, with sparks and a scan line.
 - **Moves like a body, not a toy**: when it dodges or turns, every joint swings and settles on its own
   (shoulder, elbow, wrist, hip, knee, wing feathers), it flinches at a sudden swipe, and AeroStrike has human
   hands that rest relaxed, make fists on guard and clench when startled.
+- **Wake word**: say “Hey Orbit” instead of pressing a key (Settings → Start talking with). It's heard offline on
+  your PC; nothing is sent anywhere until Orbit starts listening.
+- **Shows things on its face**: when an agent finishes, errors or needs you, Orbit's face (or AeroStrike's chest
+  screen) shows the agent's icon (Claude, Codex, Antigravity…), an emoji and a word. Ask it to show any text or emoji
+  too ("show a heart on your face"). Turn it off in Settings.
+- **AeroStrike has attitude**: a relaxed standing stance that shifts its weight, three taunts ("taunt", "flex",
+  "bring it": come-on beckon, double-biceps flex, arms crossed shaking its head), and it naps in mid-air with its arms
+  folded and knees drawn up.
 - **Five skins**: Metallic, Leather, Matte, Velvet and a holographic Crazy skin (see below).
 - **Your choice of voice and devices**: 30 Gemini voices, pick your microphone and speaker in Settings.
 - **Private by design**: your API key is stored encrypted on your PC, and chat logs never leave it.
@@ -142,11 +151,20 @@ Change it from right-click → **Skin**, in Settings, or just ask: "wear your ve
 ## Requirements
 
 - Windows 10 or 11
-- [Node.js](https://nodejs.org) 20 or newer
 - A microphone
 - A Gemini API key. It's free to get one at [Google AI Studio](https://aistudio.google.com/apikey).
+- [Node.js](https://nodejs.org) 20 or newer, only if you run it from source
 
-## Install and run
+## Download
+
+Get the latest build from [Releases](https://github.com/Quantumdrift21/orbit-ai/releases/latest):
+
+- **`Orbit AI Setup <version>.exe`**: installer, adds Orbit to the Start menu.
+- **`Orbit AI <version>.exe`**: portable, just double-click it. Nothing to install.
+
+The `.exe` files are not code-signed, so Windows SmartScreen may warn you the first time ("More info" → "Run anyway").
+
+## Run from source
 
 ```bash
 git clone https://github.com/Quantumdrift21/orbit-ai.git
@@ -198,21 +216,22 @@ missing, it uses your default browser and tells you.
 
 Right-click the robot → **Settings…**
 
-| Setting         | Notes                                                                               |
-| --------------- | ----------------------------------------------------------------------------------- |
-| API key         | Stored encrypted with Windows DPAPI                                                 |
-| Model           | Default `gemini-3.8-live`; any Gemini Live model name works                         |
-| Voice           | 30 Gemini voices                                                                    |
-| Skin            | Metallic, Leather, Matte, Velvet or Crazy                                           |
-| Languages       | Main + optional second language (any of 99), or Auto. Picking them is most reliable |
-| Apps by voice   | Find Start-menu apps automatically (on by default), with a Rescan link              |
-| Browser control | Let Orbit drive its own browser window (off by default)                             |
-| Watch AI agents | One checkbox per agent (off by default); greyed out when not installed              |
-| Alert voice     | Natural offline voice for alerts (Kokoro, ~90 MB, Download button); 7 voices        |
-| Microphone      | With a live level meter. Virtual mics (Camo, VB-Cable, OBS…) are skipped by default |
-| Speaker         | With a test chime                                                                   |
-| Hotkey          | Default Ctrl+Space                                                                  |
-| System prompt   | Change Orbit's personality                                                          |
+| Setting            | Notes                                                                               |
+| ------------------ | ----------------------------------------------------------------------------------- |
+| API key            | Stored encrypted with Windows DPAPI                                                 |
+| Model              | Default `gemini-3.8-live`; any Gemini Live model name works                         |
+| Voice              | 30 Gemini voices                                                                    |
+| Skin               | Metallic, Leather, Matte, Velvet or Crazy                                           |
+| Languages          | Main + optional second language (any of 99), or Auto. Picking them is most reliable |
+| Apps by voice      | Find Start-menu apps automatically (on by default), with a Rescan link              |
+| Browser control    | Let Orbit drive its own browser window (off by default)                             |
+| Watch AI agents    | One checkbox per agent (off by default); greyed out when not installed              |
+| Alert voice        | Natural offline voice for alerts (Kokoro, ~90 MB, Download button); 7 voices        |
+| Microphone         | With a live level meter. Virtual mics (Camo, VB-Cable, OBS…) are skipped by default |
+| Speaker            | With a test chime                                                                   |
+| Hotkey             | Default Ctrl+Space                                                                  |
+| Start talking with | Key press, the wake word “Hey Orbit” (offline, ~40 MB download), or both            |
+| System prompt      | Change Orbit's personality                                                          |
 
 ## Watch your AI agents
 
@@ -291,8 +310,10 @@ OpenClaw) can be added the same way.
 | `form.js`                             | Window sizes for small Orbit and AeroStrike                          |
 | `flight.js`, `renderer/heading.js`    | Flying any direction: turning to the flight path, AeroStrike's depth |
 | `renderer/joints.js`                  | Follow-through: every joint swings and settles on its own            |
+| `renderer/postures.js`, `faceCard.js` | AeroStrike stance, taunts and sleep; cards on the face screen        |
 | `avoid.js`, `typing-watch.js`         | Polite flying: stay off the text you type, steer around the pointer  |
 | `browser.js`, `browser-rules.js`      | Browser control (Playwright) and its safety rules                    |
+| `wake.js`, `renderer/wakeword.js`     | Offline wake word “Hey Orbit” (Whisper tiny)                         |
 | `voice.js`, `renderer/bubble.*`       | Natural offline alert voice (Kokoro) and the subtitle bubble         |
 | `renderer/jet.js`, `jetPhysics.js`    | Jet flames and exhaust, and their physics                            |
 | `renderer/mech.js`, `sfx.js`          | The AeroStrike mech, its transformation and sounds                   |

@@ -123,6 +123,13 @@ function createBrowser({ profileDir, confirm }) {
 
     async browser_read() {
       await open();
+      if (page.url() === 'about:blank')
+        return {
+          ok: false,
+          error:
+            "Your browser window has no page open. A site opened with open_website is in the user's own browser, " +
+            'which you cannot read or click: open it again with browser_open, then read it.',
+        };
       // the page's main content when it has one (skips headers and side menus), without link addresses:
       // that leaves room for what matters, e.g. YouTube's results instead of its menu
       const main = page.locator('main, [role="main"]').first();
