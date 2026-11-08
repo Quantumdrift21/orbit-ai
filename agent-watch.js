@@ -2,12 +2,15 @@
 // Orbit's local listener; the other agents run Orbit's bridge script (orbit-hook.ps1) or plugin,
 // which forwards their events. This module translates each agent's events into one common shape,
 // turns them into short alerts, hides secrets, and builds the hook entries Orbit adds to each
-// agent's config. Pure functions, tested in test/agent-watch.test.js.
+// agent's config. Pure functions (plus editConfig, the one safe way to rewrite an agent's config
+// file), tested in test/agent-watch.test.js.
+const fs = require('fs');
 const path = require('path');
 
-const PORT = 47821;
+const PORT = 47873; // was 47821 until another app took it; installed hooks move over at startup (main.js)
 const URL_PREFIX = `http://127.0.0.1:${PORT}/claude/`;
 const AGENT_URL_PREFIX = `http://127.0.0.1:${PORT}/agent/`;
+const MCP_URL_PREFIX = `http://127.0.0.1:${PORT}/mcp/`; // Orbit's MCP tools for agents (mcp.js)
 const APPROVE_WAIT_SECS = 25; // then the agent's own prompt takes over
 // Prompts where a bare "allow" would skip the user's real answer (plan review, a question): Orbit
 // only announces these and leaves the answer to the agent's own prompt.
@@ -62,11 +65,35 @@ const clip = (s, n) => {
   return t.length > n ? t.slice(0, n - 1) + '…' : t;
 };
 
-/** The useful part of a tool call for the approval card (command, file or URL), secret-filtered. */
-function toolDetail(tool, input) {
+const DETAIL_KEYS = ['command', 'file_path', 'url', 'pattern', 'description'];
+
+/** The useful part of a tool call: its command, file or URL (key = which field), else the whole input as JSON. */
+function rawDetail(input) {
   input = input && typeof input === 'object' ? input : {};
-  const raw = input.command ?? input.file_path ?? input.url ?? input.pattern ?? input.description;
-  return clip(hideSecrets(raw ?? JSON.stringify(input)), 160);
+  const key = DETAIL_KEYS.find((k) => input[k] != null);
+  return { key, input, text: String(key ? input[key] : JSON.stringify(input)) };
+}
+
+/** A tool call in one secret-filtered line, for history and the spoken summary. */
+const toolDetail = (tool, input) => clip(hideSecrets(rawDetail(input).text), 160);
+
+// What fits on the approval card (3 wrapped lines of its monospace text).
+const CARD_CHARS = 100;
+
+/**
+ * The approval card's text. partial = the card can't show everything the tool would do — cut
+ * short, something hidden as a secret, or other fields it doesn't show (a Write's content, an
+ * Edit's new text) — so it must not offer Allow (only Deny or answering in the terminal).
+ */
+function approvalDetail(tool, input) {
+  const { key, input: all, text } = rawDetail(input);
+  const full = text.replace(/\s+/g, ' ').trim();
+  const shown = hideSecrets(full);
+  // a description or a number/flag (timeout, run_in_background) can't change what runs
+  const unseen = Object.entries(all).some(
+    ([k, v]) => k !== key && k !== 'description' && v != null && v !== '' && !['number', 'boolean'].includes(typeof v),
+  );
+  return { text: clip(shown, CARD_CHARS), partial: unseen || shown !== full || full.length > CARD_CHARS };
 }
 
 /** First sentence of the agent's reply, without markdown, for "Claude finished: …". */
@@ -82,7 +109,9 @@ function firstSentence(text) {
 }
 
 // ---------- Claude Code hook entries in ~/.claude/settings.json ----------
-const isOrbitHttp = (h) => h?.type === 'http' && typeof h.url === 'string' && h.url.startsWith(URL_PREFIX);
+// Orbit's own entries on any port, so moving the port removes the old entries instead of leaving them behind
+const isOrbitHttp = (h) =>
+  h?.type === 'http' && typeof h.url === 'string' && /^http:\/\/127\.0\.0\.1:\d+\/claude\//.test(h.url);
 
 /** Settings with Orbit's hook entries removed. Everything else, including other hooks, is kept as is. */
 function withoutOrbitHooks(settings, isOrbit = isOrbitHttp) {
@@ -216,20 +245,122 @@ function withoutHermesHooks(yaml) {
   return `${before}\n${after ? `\n${after}` : ''}`.replace(/\n+$/, '\n');
 }
 
+/**
+ * Back up, transform and atomically rewrite an agent's config file. Never overwrites a file it
+ * can't read; the first original is kept as <file>.orbit-backup. json = false: plain text.
+ */
+function editConfig(file, transform, json = true) {
+  let text = '';
+  if (fs.existsSync(file)) {
+    text = fs.readFileSync(file, 'utf8').replace(/^﻿/, '');
+    if (!fs.existsSync(file + '.orbit-backup')) fs.copyFileSync(file, file + '.orbit-backup'); // keep the original
+  }
+  let data = text;
+  if (json) {
+    try {
+      data = text ? JSON.parse(text) : {};
+    } catch {
+      throw new Error(`couldn't read ${file}, so Orbit left it unchanged`);
+    }
+  }
+  const next = transform(data);
+  writeAtomic(file, json ? JSON.stringify(next, null, 2) + '\n' : next);
+}
+
+/**
+ * Write a copy, then swap it in, so a crash mid-write never leaves a cut-off file. Windows can
+ * refuse the swap for a moment while antivirus or the search indexer has the file open: retry.
+ */
+function writeAtomic(file, text) {
+  fs.mkdirSync(path.dirname(file), { recursive: true });
+  fs.writeFileSync(file + '.tmp', text);
+  for (let i = 0; ; i++) {
+    try {
+      return fs.renameSync(file + '.tmp', file);
+    } catch (e) {
+      if (i >= 5 || !['EPERM', 'EBUSY', 'EACCES'].includes(e.code)) throw e;
+      Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 40 * (i + 1)); // short blocking pause
+    }
+  }
+}
+
 // ---------- approval replies ----------
-/** Orbit's reply to a PermissionRequest: allow, deny, or {} = "show the agent's own prompt". */
-function decision(behavior) {
+/**
+ * Orbit's reply to a PermissionRequest: allow, deny, or {} = "show the agent's own prompt".
+ * message: what the agent reads on a deny (your typed reply from Orbit's chat);
+ * updatedInput: replaces the tool's input on an allow (answers to an AskUserQuestion).
+ */
+function decision(behavior, { message = '', updatedInput = null } = {}) {
   if (behavior !== 'allow' && behavior !== 'deny') return {};
   const d = { behavior };
-  if (behavior === 'deny') d.message = 'Denied from Orbit';
+  if (behavior === 'deny') d.message = message ? `The user replied from Orbit: ${message}` : 'Denied from Orbit';
+  if (behavior === 'allow' && updatedInput) d.updatedInput = updatedInput;
   return { hookSpecificOutput: { hookEventName: 'PermissionRequest', decision: d } };
 }
 
 /** The approval reply in each agent's own format ({} = let the agent show its normal prompt). */
-function reply(agent, behavior) {
-  if (agent !== 'copilot') return decision(behavior); // Claude Code and Codex share this shape
+function reply(agent, behavior, extra = {}) {
+  if (agent !== 'copilot') return decision(behavior, extra); // Claude Code and Codex share this shape
   if (behavior !== 'allow' && behavior !== 'deny') return {};
-  return behavior === 'deny' ? { behavior, message: 'Denied from Orbit' } : { behavior };
+  if (behavior === 'allow') return { behavior };
+  return { behavior, message: extra.message ? `The user replied from Orbit: ${extra.message}` : 'Denied from Orbit' };
+}
+
+/** An AskUserQuestion answered from Orbit: the original questions plus { question text: chosen label }. */
+const answerInput = (toolInput, answers) => ({ ...(toolInput || {}), answers });
+
+/** Stop-hook reply that keeps a working agent going with the messages you typed in Orbit's chat. */
+function stopReply(messages) {
+  if (!messages?.length) return {};
+  const text = messages.map((m) => `- ${m}`).join('\n');
+  return {
+    decision: 'block',
+    reason: `The user sent you ${messages.length > 1 ? 'these messages' : 'this message'} from Orbit (their desktop assistant). Read it and act on it before stopping:\n${text}`,
+  };
+}
+
+// ---------- transcripts (shown in Orbit's chat window) ----------
+const partsText = (content) =>
+  typeof content === 'string'
+    ? content
+    : (Array.isArray(content) ? content : [])
+        .filter((c) => ['text', 'input_text', 'output_text'].includes(c?.type))
+        .map((c) => c.text)
+        .join('\n');
+
+/**
+ * The conversation in an agent's local transcript (JSON lines; Claude Code's and Codex's formats),
+ * newest last: [{ role: 'user' | 'agent' | 'tool', text }], secret-filtered, at most `max` entries.
+ */
+function transcriptMessages(text, max = 80) {
+  const out = [];
+  const push = (role, t) => {
+    const s = String(t ?? '').trim();
+    if (s) out.push({ role, text: hideSecrets(s.length > 2000 ? s.slice(0, 1999) + '…' : s) });
+  };
+  for (const line of String(text).split('\n')) {
+    let o;
+    try {
+      o = JSON.parse(line);
+    } catch {
+      continue; // a cut-off first line from reading only the tail
+    }
+    if (o.type === 'user' || o.type === 'assistant') {
+      // Claude Code
+      if (o.isMeta) continue;
+      const content = o.message?.content;
+      push(o.type === 'user' ? 'user' : 'agent', partsText(content));
+      for (const c of Array.isArray(content) ? content : [])
+        if (c?.type === 'tool_use') push('tool', `${c.name}: ${clip(rawDetail(c.input).text, 160)}`);
+    } else if (o.type === 'response_item') {
+      // Codex
+      const p = o.payload || {};
+      if (p.type === 'message' && (p.role === 'user' || p.role === 'assistant'))
+        push(p.role === 'user' ? 'user' : 'agent', partsText(p.content));
+      else if (p.type === 'function_call') push('tool', `${p.name}: ${clip(String(p.arguments ?? ''), 160)}`);
+    }
+  }
+  return out.slice(-max);
 }
 
 // ---------- each agent's events → one common (Claude-style) event ----------
@@ -341,16 +472,62 @@ class Watch {
     if (!s) {
       if (this.sessions.size >= MAX_SESSIONS) this.sessions.delete(this.sessions.keys().next().value);
       s = {
+        key: id,
+        agent: evt.agent || 'claude',
         project: path.basename(String(evt.cwd || '')) || who,
         who,
         history: [],
         fails: [],
+        inbox: [], // messages you typed in Orbit's chat, waiting for the agent's next stop
         lastPermission: -Infinity,
       };
       this.sessions.set(id, s);
     }
     s.seen = t;
+    if (evt.cwd) s.cwd = String(evt.cwd);
+    if (evt.transcript_path) s.transcript = String(evt.transcript_path);
+    // working = between your prompt and its stop: a message typed now reaches it when it next stops
+    const idle =
+      ['Stop', 'StopFailure'].includes(evt.hook_event_name) ||
+      (evt.hook_event_name === 'Notification' && evt.notification_type === 'idle_prompt');
+    s.working = !idle;
     return s;
+  }
+
+  /** A session by key ('claude:<session id>'), or the most recent one. */
+  session(key) {
+    if (key) return this.sessions.get(key) || null;
+    return [...this.sessions.values()].sort((a, b) => b.seen - a.seen)[0] || null;
+  }
+
+  /** The most recent session working in `cwd` (for the MCP tools, which only know the folder). */
+  sessionAt(cwd) {
+    const norm = (p) => path.resolve(String(p || '')).toLowerCase();
+    const want = norm(cwd);
+    return (
+      [...this.sessions.values()].filter((s) => s.cwd && norm(s.cwd) === want).sort((a, b) => b.seen - a.seen)[0] ||
+      null
+    );
+  }
+
+  /** Queue a message you typed for a session; returns false if there's no such session. */
+  queueMessage(key, text) {
+    const s = this.sessions.get(key);
+    const msg = String(text ?? '')
+      .trim()
+      .slice(0, 2000);
+    if (!s || !msg) return false;
+    s.inbox.push(msg);
+    return true;
+  }
+
+  /** Take (and clear) the messages waiting for a session. */
+  takeMessages(key) {
+    const s = this.sessions.get(key);
+    if (!s) return [];
+    const m = s.inbox;
+    s.inbox = [];
+    return m;
   }
 
   #note(s, text, t) {
@@ -440,7 +617,15 @@ class Watch {
     }
     s.lastKind = out.kind;
     this.#note(s, out.caption, t);
-    return { kind: out.kind, say: out.say, caption: out.caption, project: p, urgent: !!out.urgent };
+    return {
+      kind: out.kind,
+      say: out.say,
+      caption: out.caption,
+      project: p,
+      who,
+      session: s.key,
+      urgent: !!out.urgent,
+    };
   }
 
   /** Recent activity across agents and sessions, newest first, secret-filtered. */
@@ -464,12 +649,14 @@ module.exports = {
   PORT,
   URL_PREFIX,
   AGENT_URL_PREFIX,
+  MCP_URL_PREFIX,
   AGENTS,
   HOOK_EVENTS,
   APPROVE_WAIT_SECS,
   NEEDS_OWN_ANSWER,
   hideSecrets,
   toolDetail,
+  approvalDetail,
   withOrbitHooks,
   withoutOrbitHooks,
   withCodexHooks,
@@ -481,8 +668,13 @@ module.exports = {
   withHermesHooks,
   withoutHermesHooks,
   hookCommand,
+  editConfig,
+  writeAtomic,
   decision,
   reply,
+  answerInput,
+  stopReply,
+  transcriptMessages,
   normalize,
   Watch,
 };

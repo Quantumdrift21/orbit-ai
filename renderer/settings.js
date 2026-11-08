@@ -8,6 +8,8 @@ const fields = [
   'language',
   'language2',
   'detectApps',
+  'browserControl',
+  'alertVoice',
   'watchClaude',
   'watchCodex',
   'watchCopilot',
@@ -60,6 +62,23 @@ Promise.all([window.orbit.agentsInfo(), window.orbit.getConfig()]).then(([info, 
     note.textContent = !a.installed ? '(not installed)' : a.approve ? '(alerts + Allow/Deny)' : '(alerts)';
     if (!a.installed && !cfg[a.flag]) box.disabled = true; // still lets you turn off one that was on
   }
+});
+
+// ---------- natural alert voice (Kokoro, voice.js): downloaded only when you click ----------
+const voiceHint = $('voiceHint');
+const showVoice = ({ downloaded }) => {
+  $('voiceDownload').hidden = downloaded;
+  if (downloaded) voiceHint.textContent = 'Natural offline voice (Kokoro) is ready for alerts.';
+};
+window.orbit.voiceStatus().then(showVoice);
+window.orbit.onVoiceProgress((p) => (voiceHint.textContent = `Downloading the voice… ${p}%`));
+$('voiceDownload').addEventListener('click', async () => {
+  $('voiceDownload').disabled = true;
+  voiceHint.textContent = 'Downloading the voice…';
+  const r = await window.orbit.voiceDownload();
+  $('voiceDownload').disabled = false;
+  if (r.ok) showVoice({ downloaded: true });
+  else voiceHint.textContent = `Download failed: ${r.error}`;
 });
 
 // ---------- audio devices ----------

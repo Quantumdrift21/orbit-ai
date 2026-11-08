@@ -1,4 +1,9 @@
-# Orbit AI
+# Orbit AI ![version](https://img.shields.io/badge/version-0.1.0--beta-orange)
+
+> [!WARNING]
+> **Beta (v0.1.0-beta).** Orbit is still in beta: things may change and you may run into bugs. When the final
+> version is released, this page will be updated here. Found a problem? Please
+> [open an issue](https://github.com/Quantumdrift21/orbit-ai/issues).
 
 **A tiny 3D robot that lives on your Windows desktop and talks with you.**
 
@@ -21,16 +26,32 @@ It speaks **99 languages** (including English and Tamil), opens any app on your 
   mis-hears you as a similar-sounding language. Auto mode follows the conversation without any setup.
 - **A robot with a life of its own**: a small Three.js robot with a glowing face that listens, thinks, talks, gets
   surprised and falls asleep.
-- **Daily routine**: it roams the screen, goes on little journeys, flinches away from a fast mouse but lets you approach
-  slowly, naps when nobody talks to it, and is calmer at night.
+- **Daily routine**: it roams the screen, goes on little journeys, naps when nobody talks to it, and is calmer at
+  night. It's polite about it: while you type it never sits or flies in front of your text, and in flight it steers
+  around the mouse pointer (dodging fast swipes). Hold the pointer still on it for a moment to catch it.
+- **Flies in any direction**: it turns to face where it's flying, all the way round, banking into turns and
+  pitching up as it climbs, then turns back to face you when it stops. AeroStrike also flies into the screen and back
+  out: it shrinks into the distance (showing its back and jets) and grows as it comes close.
+- **Jet engines**: Orbit and AeroStrike fly on real-looking jet flames, with a blue-white core, an orange plume, shock
+  diamonds and flicker. The engines spool up as they climb or speed up, and their exhaust drifts, rises and trails
+  behind as they fly.
 - **Flying stunts**: spins, backflips, barrel rolls and loop-the-loops. It shows off on its own after a journey (more in
   the morning, never at night), when you ask ("do a backflip!"), or from right-click → Do a trick.
 - **Opens your apps by voice**: Orbit finds the apps in your Start menu automatically, so "open Blender" or "open
   Spotify" just works. It also opens websites: "open YouTube", "search for biryani recipes".
+- **Controls a browser for you** (optional, uses [Playwright](https://github.com/microsoft/playwright)): "search YouTube
+  for lo-fi and play the first one", "open GitHub trending and tell me the top repo". It uses its own Edge, Chrome or
+  Brave window with a separate profile, never types passwords or card details, and asks on a card before buying,
+  signing in, posting, deleting or sending a form.
 - **Moods**: Orbit feels happy, excited, calm, bored, sleepy or grumpy, depending on how you treat it (see below).
 - **Watches your AI coding agents**: Claude Code, Codex, GitHub Copilot CLI, OpenCode, Antigravity and Hermes. It
   tells you live when one needs you, finishes or hits an error, and lets you click Allow / Deny where the agent
   supports it (see below).
+- **Transforms into AeroStrike**: Orbit unfolds into a winged aerial combat mech, part by part, with servo and
+  clank sounds and glowing thrusters (see below).
+- **Moves like a body, not a toy**: when it dodges or turns, every joint swings and settles on its own
+  (shoulder, elbow, wrist, hip, knee, wing feathers), it flinches at a sudden swipe, and AeroStrike has human
+  hands that rest relaxed, make fists on guard and clench when startled.
 - **Five skins**: Metallic, Leather, Matte, Velvet and a holographic Crazy skin (see below).
 - **Your choice of voice and devices**: 30 Gemini voices, pick your microphone and speaker in Settings.
 - **Private by design**: your API key is stored encrypted on your PC, and chat logs never leave it.
@@ -50,6 +71,30 @@ It speaks **99 languages** (including English and Tamil), opens any app on your 
 
 Feelings fade on their own, so Orbit drifts back to calm. Right-click shows its current mood. The mood also sets
 Gemini's tone at the start of each conversation.
+
+### AeroStrike
+
+Say "transform!" (or "suit up", "battle mode"), or right-click → **Transform to AeroStrike**. Orbit's window grows,
+then its body unfolds over about 3 seconds: legs, chest plates, arms, shoulder turbines, head, backpack and finally
+the wings fan out and a blade slides out of the right forearm, each part clanking into place. Orbit's face becomes
+a glowing power core in the chest. Sometimes it transforms on its own after a journey, and folds back after a few
+minutes. Say "fold back" or use right-click → **Fold back to Orbit** to return to small Orbit.
+
+**Defence mode**: say "defence mode" (or "guard yourself") or tick right-click → **Defence mode (AeroStrike)**.
+AeroStrike transforms if needed, stops roaming and takes a fighter's stance, fists up and glowing hotter. Every
+left-click on it is fended off with a random move, done like a person would: a flinch, then a forearm block, a
+chambered side kick toward the click (leaning back to keep its balance) or a red laser fired from the chest core
+at the cursor, and the impact rocks it back before it settles. Right-click it to turn defence off again.
+
+The mech is modelled in [Blender](https://www.blender.org/) by a script, so it can be changed and rebuilt:
+
+```bash
+blender -b -P tools/aerostrike.py
+```
+
+This writes `renderer/models/aerostrike.glb.js`. Add `-- --blend` to also save `tools/aerostrike.blend` to look
+around in Blender. Each module (head, chest, shoulders, arms, legs, backpack, wings, blade) is a named object that
+Orbit animates on its own.
 
 ### Skins
 
@@ -112,6 +157,7 @@ Everything around the robot is click-through, so it never blocks the windows und
 - "Open Blender" / "Open Calculator"
 - "Do a backflip!" / "Show me a loop-the-loop"
 - "Wear your leather skin" / "Go crazy!"
+- "Transform!" / "Fold back"
 
 **Apps it can open:** anything in your Start menu (found automatically, refresh with Settings → Rescan), plus Chrome,
 Edge, Brave, Notepad, Calculator, File Explorer, Paint, Settings, Task Manager, Command Prompt, VS Code, Spotify,
@@ -131,7 +177,9 @@ Right-click the robot → **Settings…**
 | Skin            | Metallic, Leather, Matte, Velvet or Crazy                                           |
 | Languages       | Main + optional second language (any of 99), or Auto. Picking them is most reliable |
 | Apps by voice   | Find Start-menu apps automatically (on by default), with a Rescan link              |
+| Browser control | Let Orbit drive its own browser window (off by default)                             |
 | Watch AI agents | One checkbox per agent (off by default); greyed out when not installed              |
+| Alert voice     | Natural offline voice for alerts (Kokoro, ~90 MB, Download button); 7 voices        |
 | Microphone      | With a live level meter. Virtual mics (Camo, VB-Cable, OBS…) are skipped by default |
 | Speaker         | With a test chime                                                                   |
 | Hotkey          | Default Ctrl+Space                                                                  |
@@ -143,11 +191,21 @@ Orbit can keep an eye on the AI coding agents you use. Tick them in **Settings �
 session in each agent.
 
 - **Live alerts**: "Codex needs you in my-project", "Claude finished in my-project: …", errors, and (for Claude Code)
-  subagents or tasks finishing. Spoken with your PC's offline voice and shown as a caption; the robot looks surprised
-  when an agent needs you.
-- **Approve by click**: when an agent asks permission (for example to run a command), a small card appears next to the
-  robot with **Allow**, **Deny** and **Use terminal**. If you don't click within 25 seconds, the agent shows its usual
-  prompt. Orbit never approves anything by voice.
+  subagents or tasks finishing. Spoken offline with a natural voice ([Kokoro](https://huggingface.co/hexgrad/Kokoro-82M),
+  downloaded once from Settings; the Windows voice until then), with a subtitle bubble beside the robot that shows the
+  words as they're spoken. The robot looks surprised when an agent needs you.
+- **Answer from the bubble**: when an agent asks permission (for example to run a command), the bubble beside the robot
+  shows it with **Allow**, **Deny** and **Chat**. When Claude Code asks you a question, the bubble shows its answers
+  as buttons. If you don't answer within 25 seconds (55 once you open the chat), the agent shows its usual prompt.
+  Orbit never approves anything by voice. A command too long for the bubble can only be allowed from the chat.
+- **Chat with the agent**: **Chat** (or right-click → Agent chat…) opens a window with the conversation so far, read
+  from the agent's own transcript on this PC, so you can scroll back for context. There you can:
+  - **Deny with a message**: type what the agent should do instead, and it carries on with that.
+  - **Answer its question** in your own words.
+  - **Message it while it works**: it gets your message the next time it pauses, or checks Orbit.
+- **Orbit as an MCP server** (Claude Code): Orbit adds itself to Claude Code's MCP servers, so Claude can ask you
+  something through Orbit (`ask_user`: spoken, shown in the bubble, answered in the chat) and pick up your messages
+  (`check_messages`), even when you're away from the terminal.
 - **Ask about it**: "what are my agents doing?" and Orbit answers from a short summary.
 
 | Agent              | Alerts                                     | Allow / Deny card | What Orbit adds                                                       |
@@ -177,9 +235,12 @@ OpenClaw) can be added the same way.
   locally.
 - **Chat logs** (text transcripts) are saved only on your PC in `%APPDATA%\orbit-ai\logs`. Open them from the
   right-click menu, delete them any time.
-- **AI agent activity** stays on your PC: alerts use the offline Windows voice, keys and passwords are hidden as
-  `[hidden]`, and Orbit never reads the agents' transcripts. Only when you ask Orbit about your agents does a short,
-  filtered summary go to Gemini.
+- **Where you type**: to stay out of your way, Orbit checks where the text cursor is (never what you type) on this PC.
+- **The browser Orbit controls** has its own profile in `%APPDATA%\orbit-ai\browser-profile`, separate from yours. What
+  it reads from web pages goes to Gemini only when you ask Orbit to browse.
+- **AI agent activity** stays on your PC: alerts are spoken offline (Kokoro or the Windows voice), keys and passwords are hidden as
+  `[hidden]`, and an agent's transcript is read only while you have its chat open, only on this PC. Only when you ask
+  Orbit about your agents does a short, filtered summary go to Gemini.
 - Your conversations are handled by Google under the [Gemini API terms](https://ai.google.dev/gemini-api/terms). On the
   free tier, Google may use your data to improve its products.
 
@@ -198,9 +259,20 @@ OpenClaw) can be added the same way.
 | ------------------------------------- | -------------------------------------------------------------------- |
 | `main.js`                             | Windows, hotkey, menu, settings storage (encrypted key)              |
 | `brain.js`                            | Roaming, mouse dodging, naps, daily routine, click-through           |
+| `form.js`                             | Window sizes for small Orbit and AeroStrike                          |
+| `flight.js`, `renderer/heading.js`    | Flying any direction: turning to the flight path, AeroStrike's depth |
+| `renderer/joints.js`                  | Follow-through: every joint swings and settles on its own            |
+| `avoid.js`, `typing-watch.js`         | Polite flying: stay off the text you type, steer around the pointer  |
+| `browser.js`, `browser-rules.js`      | Browser control (Playwright) and its safety rules                    |
+| `voice.js`, `renderer/bubble.*`       | Natural offline alert voice (Kokoro) and the subtitle bubble         |
+| `renderer/jet.js`, `jetPhysics.js`    | Jet flames and exhaust, and their physics                            |
+| `renderer/mech.js`, `sfx.js`          | The AeroStrike mech, its transformation and sounds                   |
+| `renderer/flip.js`, `defend.js`       | AeroStrike's stunts and defence moves (body physics)                 |
+| `tools/aerostrike.py`                 | Blender script that models AeroStrike (→ `renderer/models/`)         |
 | `mood.js`                             | Orbit's moods: what raises each feeling, how fast it fades           |
 | `agent-watch.js`                      | AI agent events → alerts, secret hiding, each agent's hook entries   |
-| `renderer/approve.*`                  | The Allow / Deny card for agents' permission requests                |
+| `renderer/chat.*`                     | Agent chat: the conversation, answering requests, your messages      |
+| `mcp.js`                              | Orbit's MCP tools for agents: `ask_user`, `check_messages`           |
 | `actions.js`                          | The apps and websites Gemini may open, with safety checks            |
 | `preload.js`                          | The small, safe bridge between the window and the main process       |
 | `renderer/app.js`                     | Listen → think → speak state machine                                 |

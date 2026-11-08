@@ -1,0 +1,289 @@
+<!doctype html>
+<html>
+  <head>
+    <meta charset="utf-8" />
+    <meta
+      http-equiv="Content-Security-Policy"
+      content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'"
+    />
+    <title>Orbit – agent chat</title>
+    <style>
+      :root {
+        color-scheme: dark;
+        --accent: 56, 217, 255;
+        --bg: #0d0e17;
+        --panel: #151724;
+        --line: rgba(255, 255, 255, 0.08);
+        --muted: #8d93a8;
+      }
+      * {
+        box-sizing: border-box;
+      }
+      html,
+      body {
+        margin: 0;
+        height: 100%;
+        background: var(--bg);
+        color: #e9ecf5;
+        font:
+          13.5px/1.5 'Segoe UI Variable Text',
+          'Segoe UI',
+          system-ui,
+          sans-serif;
+      }
+      body {
+        display: flex;
+        flex-direction: column;
+        border: 1px solid rgba(var(--accent), 0.35);
+        border-radius: 12px;
+        overflow: hidden;
+      }
+      header {
+        -webkit-app-region: drag;
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        padding: 10px 12px;
+        background: linear-gradient(180deg, rgba(var(--accent), 0.1), transparent);
+        border-bottom: 1px solid var(--line);
+      }
+      header select,
+      header button {
+        -webkit-app-region: no-drag;
+      }
+      .chip {
+        display: inline-flex;
+        align-items: center;
+        gap: 6px;
+        padding: 2px 9px 2px 7px;
+        border-radius: 999px;
+        background: rgba(var(--accent), 0.14);
+        color: rgb(var(--accent));
+        font:
+          600 11px 'Segoe UI',
+          sans-serif;
+        text-transform: uppercase;
+        letter-spacing: 0.04em;
+      }
+      .dot {
+        width: 6px;
+        height: 6px;
+        border-radius: 50%;
+        background: currentColor;
+      }
+      #project {
+        font-weight: 600;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+      }
+      #status {
+        font-size: 11px;
+        color: var(--muted);
+        white-space: nowrap;
+      }
+      #sessions {
+        margin-left: auto;
+        max-width: 130px;
+        background: var(--panel);
+        color: inherit;
+        border: 1px solid var(--line);
+        border-radius: 7px;
+        font-size: 11.5px;
+        padding: 2px 4px;
+      }
+      #close {
+        margin-left: auto;
+        background: none;
+        border: 0;
+        color: var(--muted);
+        font-size: 18px;
+        line-height: 1;
+        cursor: pointer;
+        padding: 0 4px;
+      }
+      #sessions:not([hidden]) + #close {
+        margin-left: 0;
+      }
+      #close:hover {
+        color: #fff;
+      }
+      main {
+        flex: 1;
+        overflow-y: auto;
+        padding: 12px 12px 6px;
+        display: flex;
+        flex-direction: column;
+        gap: 8px;
+      }
+      .msg {
+        max-width: 88%;
+        padding: 8px 11px;
+        border-radius: 13px;
+        white-space: pre-wrap;
+        word-wrap: break-word;
+      }
+      .user {
+        align-self: flex-end;
+        background: rgba(var(--accent), 0.16);
+        border: 1px solid rgba(var(--accent), 0.3);
+        border-bottom-right-radius: 4px;
+      }
+      .agent {
+        align-self: flex-start;
+        background: var(--panel);
+        border: 1px solid var(--line);
+        border-bottom-left-radius: 4px;
+      }
+      .tool {
+        align-self: flex-start;
+        font:
+          11.5px/1.4 Consolas,
+          'Cascadia Mono',
+          monospace;
+        color: var(--muted);
+        padding: 2px 6px;
+      }
+      .tool::before {
+        content: '› ';
+        color: rgb(var(--accent));
+      }
+      .empty {
+        margin: auto;
+        color: var(--muted);
+        text-align: center;
+        max-width: 280px;
+      }
+      #request {
+        margin: 0 10px;
+        padding: 10px 11px;
+        border-radius: 12px;
+        background: rgba(255, 196, 77, 0.07);
+        border: 1px solid rgba(255, 196, 77, 0.4);
+      }
+      #request h3 {
+        margin: 0 0 6px;
+        font-size: 13px;
+        display: flex;
+        gap: 8px;
+      }
+      #request h3 span {
+        margin-left: auto;
+        font-weight: 400;
+        color: var(--muted);
+      }
+      pre {
+        margin: 0 0 8px;
+        max-height: 150px;
+        overflow: auto;
+        padding: 7px 9px;
+        border-radius: 8px;
+        background: rgba(0, 0, 0, 0.35);
+        font:
+          11.5px/1.45 Consolas,
+          'Cascadia Mono',
+          monospace;
+        white-space: pre-wrap;
+        word-break: break-all;
+      }
+      .row {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 6px;
+      }
+      button.act {
+        border: 1px solid var(--line);
+        border-radius: 9px;
+        padding: 6px 12px;
+        font:
+          600 12px 'Segoe UI',
+          sans-serif;
+        color: #eef1f8;
+        background: rgba(255, 255, 255, 0.07);
+        cursor: pointer;
+      }
+      button.act:hover {
+        background: rgba(255, 255, 255, 0.14);
+      }
+      button.allow {
+        background: rgba(31, 143, 95, 0.9);
+      }
+      button.deny {
+        background: rgba(168, 58, 69, 0.9);
+      }
+      .note {
+        font-size: 11.5px;
+        color: var(--muted);
+        margin-top: 6px;
+      }
+      footer {
+        padding: 10px;
+        border-top: 1px solid var(--line);
+      }
+      .composer {
+        display: flex;
+        gap: 8px;
+        align-items: flex-end;
+      }
+      textarea {
+        flex: 1;
+        resize: none;
+        min-height: 38px;
+        max-height: 140px;
+        padding: 9px 11px;
+        border-radius: 11px;
+        border: 1px solid var(--line);
+        background: var(--panel);
+        color: inherit;
+        font: inherit;
+        outline: none;
+      }
+      textarea:focus {
+        border-color: rgba(var(--accent), 0.6);
+      }
+      textarea:disabled {
+        opacity: 0.5;
+      }
+      #send {
+        height: 38px;
+        padding: 0 14px;
+        border: 0;
+        border-radius: 11px;
+        background: rgb(var(--accent));
+        color: #071018;
+        font:
+          700 12.5px 'Segoe UI',
+          sans-serif;
+        cursor: pointer;
+      }
+      #send:disabled {
+        opacity: 0.4;
+        cursor: default;
+      }
+      #hint {
+        font-size: 11px;
+        color: var(--muted);
+        margin-top: 6px;
+      }
+    </style>
+  </head>
+  <body>
+    <header>
+      <span class="chip"><span class="dot"></span><span id="who">Agent</span></span>
+      <span id="project"></span>
+      <span id="status"></span>
+      <select id="sessions" title="Conversation" hidden></select>
+      <button id="close" title="Close">×</button>
+    </header>
+    <main id="log"></main>
+    <div id="request" hidden></div>
+    <footer>
+      <div class="composer">
+        <textarea id="input" rows="1" placeholder="Message"></textarea>
+        <button id="send">Send</button>
+      </div>
+      <div id="hint"></div>
+    </footer>
+    <script src="chat.js"></script>
+  </body>
+</html>

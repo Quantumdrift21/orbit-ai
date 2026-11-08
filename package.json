@@ -1,6 +1,6 @@
 {
   "name": "orbit-ai",
-  "version": "0.1.0",
+  "version": "0.1.0-beta",
   "description": "A tiny 3D robot on your Windows desktop that talks with you, powered by the Gemini Live API",
   "author": "Vignesh Jayasankar (https://github.com/Quantumdrift21)",
   "license": "MIT",
@@ -40,15 +40,28 @@
       "actions.js",
       "brain.js",
       "mood.js",
+      "form.js",
+      "avoid.js",
+      "flight.js",
+      "typing-watch.js",
+      "browser.js",
+      "browser-rules.js",
+      "voice.js",
+      "mcp.js",
       "agent-watch.js",
       "preload.js",
       "renderer/**/*"
+    ],
+    "asarUnpack": [
+      "node_modules/onnxruntime-node/**/*"
     ],
     "win": {
       "target": "nsis"
     }
   },
   "dependencies": {
+    "kokoro-js": "^1.2.1",
+    "playwright-core": "^1.65.0",
     "three": "^0.170.0",
     "ws": "^8.22.1"
   }
