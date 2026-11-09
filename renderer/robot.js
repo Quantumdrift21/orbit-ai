@@ -10,6 +10,9 @@ import { createJet } from './jet.js';
 import { spool, thrustDemand } from './jetPhysics.js';
 import { attitude, depthScale } from './heading.js';
 import { createJoints, kick, step, flinch } from './joints.js';
+import { drawCard } from './faceCard.js';
+import { createMorphFx } from './morphFx.js';
+import { zero, stance, taunt, sleep, blend, TAUNTS } from './postures.js';
 
 /** AeroStrike's pose for a running stunt: its body motion here, its limbs in mech.js. */
 const stuntPose = (tr) =>
@@ -350,6 +353,11 @@ export class Robot {
     this.nextWander = 0;
     this.nextFrame = 0; // frame cap (see #frame)
     this.blink = { next: rand(1.5, 4), until: 0 };
+    this.card = null; // on the face screen: { card, start, until } (faceCard.js)
+    this.tauntS = null; // AeroStrike showing attitude: { kind, start } (postures.js)
+    this.nextTaunt = rand(45, 90);
+    this.standS = 0; // relaxed standing stance, eased in when it hovers still
+    this.sleepS = 0; // AeroStrike's sleeping posture, eased
     this.squash = { x: 0, v: 0 };
     this.arm = { x: 0, v: 0 };
     this.joints = createJoints(); // every joint's own follow-through spring (joints.js)
@@ -426,6 +434,19 @@ export class Robot {
     if (d && (this.t - d.start) / DEFENCE_SECS[d.kind] < 0.55) return false;
     this.def = { kind, side: nx < 0 ? -1 : 1, start: this.t, nx: clamp(nx, -1, 1), ny: clamp(ny, -1, 1) };
     this.setLook(nx, -ny); // eyes on the threat
+    return true;
+  }
+
+  /** Show a card (faceCard.js: icon, emoji, text) on the face screen for `secs`; null clears it. */
+  showCard(card, secs = 6) {
+    this.card = card ? { card, start: this.t, until: this.t + secs } : null;
+  }
+
+  /** AeroStrike taunts: 'beckon' | 'flex' | 'cross' (random if not given). False while it's busy. */
+  taunt(kind) {
+    if (!TAUNTS[kind]) kind = Object.keys(TAUNTS)[Math.floor(Math.random() * 3)];
+    if (this.tauntS || this.def || this.motion.trick) return false;
+    this.tauntS = { kind, start: this.t };
     return true;
   }
 
@@ -649,6 +670,8 @@ export class Robot {
     // AeroStrike, folded away until Orbit transforms (see mech.js)
     this.mech = buildMech({ shell: silver, trim: graphite, glowMat, sprite });
     this.root.add(this.mech.group);
+    this.morphFx = createMorphFx(); // flash, shockwave, energy cocoon, sparks, scan line while transforming
+    this.root.add(this.morphFx.group);
     for (const j of this.mech.jets) this.scene.add(j.smoke);
 
     // red laser from the chest core: a white-hot core line inside a red glow, a flare at the core
@@ -746,6 +769,13 @@ export class Robot {
 
     g.shadowColor = c;
     g.shadowBlur = 13; // in canvas pixels (not scaled by the transform)
+    // a card (agent alert, or something you asked it to show) takes over the screen for a moment
+    if (this.card && t > this.card.until) this.card = null;
+    if (this.card) {
+      drawCard(g, this.card.card, t - this.card.start, c, W, H);
+      this.faceTex.needsUpdate = true;
+      return;
+    }
     g.fillStyle = c;
     g.strokeStyle = c;
     g.lineCap = 'round';
@@ -768,7 +798,19 @@ export class Robot {
         g.arc(cx, cy, 88, a, a + 0.7);
         g.stroke();
       }
-      g.globalAlpha *= Math.min(1, 0.75 + 0.25 * Math.sin(t * 3) + lvl * 0.4); // core pulses, brighter when talking
+      // core pulses, brighter when talking; asleep it glows dim and slow, with drifting z's
+      const asleep = this.motion.sleeping;
+      g.globalAlpha *= asleep ? 0.35 + 0.2 * Math.sin(t * 0.9) : Math.min(1, 0.75 + 0.25 * Math.sin(t * 3) + lvl * 0.4);
+      if (asleep) {
+        g.save();
+        g.font = 'bold 54px Segoe UI, sans-serif';
+        for (let i = 0; i < 2; i++) {
+          const k = (t * 0.4 + i * 0.5) % 1;
+          g.globalAlpha = 0.9 * (1 - k);
+          g.fillText('z', cx + 70 + k * 60, cy - 60 - k * 70);
+        }
+        g.restore();
+      }
       g.beginPath();
       g.arc(cx, cy, 44, 0, TAU);
       g.fill();
@@ -934,6 +976,7 @@ export class Robot {
         : this.state !== 'idle' ||
             m.trick ||
             this.def || // defence moves are fast: springs and laser flicker need every frame
+            this.tauntS ||
             (m.form > 0 && m.form < 1) ||
             Math.abs(m.vx) + Math.abs(m.vy) > 40 ||
             Math.abs(this.joints.shoulderR.vx) + Math.abs(this.joints.wingR.vx) > 0.05 // limbs still swinging
@@ -972,8 +1015,10 @@ export class Robot {
     let def = null;
     if (this.def) {
       const dp = (t - this.def.start) / DEFENCE_SECS[this.def.kind];
-      if (dp >= 1 || mechP < 0.5) this.def = null;
-      else def = { ...defencePose(this.def.kind, dp), side: this.def.side };
+      if (dp >= 1 || mechP < 0.5) {
+        this.def = null;
+        if (mechP > 0.9 && Math.random() < 0.35) this.nextTaunt = t + 0.4; // sometimes a taunt after a fend-off
+      } else def = { ...defencePose(this.def.kind, dp), side: this.def.side };
     }
     const red = def ? Math.max(def.charge, def.beam) : 0; // the core glows red as the laser charges
 
@@ -1059,12 +1104,14 @@ export class Robot {
     const pose = tr && form > 0.5 ? stuntPose(tr) : null;
     this.root.position.x = 0;
     this.root.position.z = 0;
+    // the loop rolls about the body's own long axis (y first), then turns round the circle (z)
+    this.root.rotation.order = pose?.style === 'loop' ? 'ZYX' : 'XYZ';
     if (pose) {
       // turn about the waist (the centre of mass), jump, and dip on crouch and landing
       const cy = -0.55; // waist height in the parent's units (root is scaled 0.6)
       const a = pose.angle;
       const [rx, ry, rz] = { flip: [-a, 0, 0], roll: [0, 0, -a], spin: [0, a, 0], loop: [0, 0, a] }[pose.style];
-      this.root.rotation.set(rx, ry, rz);
+      this.root.rotation.set(rx, ry + (pose.bank ?? 0), rz);
       const tilt = rx || rz; // spins about the upright axis need no correction
       this.root.position.y += (pose.lift ?? 0) * 0.5 - (pose.crouch ?? 0) * 0.3 + cy - cy * Math.cos(tilt);
       this.root.position.x = rz ? cy * Math.sin(rz) : 0;
@@ -1089,7 +1136,30 @@ export class Robot {
     // flight attitude: face where it flies, all the way round (its back when AeroStrike flies into the
     // screen), bank into turns, lean into speed; face you for stunts, defence, talking and naps.
     // AeroStrike also flies into and out of the screen: perspective scale from the brain's depth.
-    const still = !!tr || !!def || this.guardS > 0.5 || st !== 'idle' || sleepy;
+    // AeroStrike's postures (postures.js): a relaxed stance when it hovers still, a taunt now and then,
+    // and its own sleeping pose (it naps as AeroStrike too)
+    const mech = clamp((form - 0.5) / 0.4, 0, 1);
+    const ease = 1 - Math.exp(-dt * 3);
+    this.sleepS = lerp(this.sleepS, mv.sleeping && form > 0.9 ? 1 : 0, ease * 0.6);
+    if (this.tauntS && (t - this.tauntS.start > TAUNTS[this.tauntS.kind] || form < 0.9 || def || tr || mv.sleeping))
+      this.tauntS = null;
+    const calm = !tr && !def && this.guardS < 0.05 && speed < 60 && !mv.sleeping && !this.tauntS;
+    this.standS = lerp(this.standS, calm ? 1 : 0, ease);
+    if (calm && form > 0.95 && st === 'idle' && this.standS > 0.9 && t > this.nextTaunt) {
+      this.taunt();
+      this.nextTaunt = t + rand(45, 90);
+    }
+    let posture = null;
+    if (mech > 0) {
+      posture = blend(zero(), stance(t), this.standS * (1 - this.sleepS));
+      if (this.tauntS) blend(posture, taunt(this.tauntS.kind, (t - this.tauntS.start) / TAUNTS[this.tauntS.kind]), 1);
+      blend(posture, sleep(t), this.sleepS);
+      if (mech < 1) posture = blend(zero(), posture, mech);
+      this.root.rotation.x += posture.root.x;
+      this.root.rotation.z += posture.root.z;
+      this.root.position.y += posture.root.y;
+    }
+    const still = !!tr || !!def || this.guardS > 0.5 || st !== 'idle' || sleepy || !!this.tauntS;
     this.attitude = attitude(this.attitude, mv, dt, { lean: form, still });
     this.flight.rotation.set(this.attitude.pitch, this.attitude.yaw, this.attitude.roll);
     this.flight.scale.setScalar(depthScale(mv.depth)); // the brain only flies AeroStrike in depth
@@ -1151,6 +1221,7 @@ export class Robot {
     });
     // AeroStrike parts unfold, then live on top of that pose
     this.mech.setMorph(form);
+    this.morphFx.update(form, t, this.accent, this.camera);
     this.mech.update(t, dt, {
       lookX: this.look.x,
       lookY: this.look.y,
@@ -1160,6 +1231,7 @@ export class Robot {
       pose,
       guard: this.guardS,
       def,
+      posture,
       joints: J,
       flinch: startle,
     });

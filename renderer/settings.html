@@ -241,6 +241,9 @@
       Codex asks you to trust new hooks once (Codex → Settings → Hooks). Hermes asks once to approve each hook.
     </div>
 
+    <label class="check"><input id="faceAlerts" type="checkbox" /> Show agent alerts on Orbit's face</label>
+    <div class="hint">The agent's icon, an emoji and a word (Done, Error, Needs you) on its face screen.</div>
+
     <label for="alertVoice">Alert voice</label>
     <div class="row">
       <select id="alertVoice">
@@ -271,6 +274,20 @@
         <option value="">Windows default</option>
       </select>
       <button id="testSpeaker" type="button">Test</button>
+    </div>
+
+    <label for="activation">Start talking with</label>
+    <div class="row">
+      <select id="activation">
+        <option value="key">Key press (hotkey) or click</option>
+        <option value="wake">Wake word “Hey Orbit” or click</option>
+        <option value="both">Wake word or key press</option>
+      </select>
+      <button id="wakeDownload" type="button">Download</button>
+    </div>
+    <div class="hint" id="wakeHint">
+      The wake word is heard offline on this PC (Whisper tiny, ~40 MB, downloaded once). While Orbit is idle the
+      microphone stays on; only short bits of speech are checked, and nothing is sent anywhere.
     </div>
 
     <label for="hotkey">Talk hotkey</label>

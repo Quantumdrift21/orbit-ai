@@ -60,14 +60,23 @@ export function tuckedFlip(p) {
 const easeInOut = (p) => (p < 0.5 ? 4 * p * p * p : 1 - Math.pow(-2 * p + 2, 3) / 2);
 
 /**
- * Loop-the-loop like a flying superhero: lean into the flight, then go round head-first (fists
- * forward, legs straight), so the body always points along the circle, and come out upright.
- * @returns {{angle:number, stretch:number}} angle: body turn in the screen plane (radians,
- *   anticlockwise, the way brain.js flies the circle); stretch: how far into the flying pose (0..1).
+ * Loop-the-loop like a flying superhero: lean into the flight, then go round head-first, so the body
+ * always points along the circle, and come out upright. Nothing moves all at once: the leading fist
+ * punches forward first and the other arm follows a beat later, the back arches most at the top of
+ * the loop (head looking into the turn), the legs flutter, and the body rolls into the turn and out.
+ * @returns {{angle:number, stretch:number, lead:number, follow:number, arch:number, flutter:number,
+ *   bank:number}} angle: body turn in the screen plane (radians, anticlockwise, the way brain.js flies
+ *   the circle); stretch: how far into the flying pose (0..1); lead / follow: each arm's reach (0..1);
+ *   arch: back arch (0..1); flutter: leg kick (-1..1); bank: roll about the body's long axis (radians).
  */
 export function superheroLoop(p) {
   p = clamp01(p);
   const stretch = smooth(0, 0.15, p) * (1 - smooth(0.85, 1, p));
+  const lead = smooth(0.02, 0.14, p) * (1 - smooth(0.8, 0.94, p));
+  const follow = smooth(0.12, 0.3, p) * (1 - smooth(0.86, 1, p));
+  const arch = Math.sin(Math.PI * p) ** 2 * stretch;
+  const flutter = Math.sin(2 * Math.PI * 5 * p) * stretch;
+  const bank = 0.45 * Math.sin(2 * Math.PI * p) * stretch;
   // the path heads (cos a, sin a) when the window is at angle a, so the head points there: a - 90°
-  return { angle: easeInOut(p) * 2 * Math.PI - (stretch * Math.PI) / 2, stretch };
+  return { angle: easeInOut(p) * 2 * Math.PI - (stretch * Math.PI) / 2, stretch, lead, follow, arch, flutter, bank };
 }

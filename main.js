@@ -10,6 +10,7 @@ const aw = require('./agent-watch');
 const { startTypingWatch } = require('./typing-watch');
 const { createBrowser } = require('./browser');
 const { createVoice } = require('./voice');
+const { createWake } = require('./wake');
 const { handleRpc } = require('./mcp');
 const { Brain, STUNTS } = require('./brain');
 const { MOOD_LABELS } = require('./mood');
@@ -359,11 +360,13 @@ const DEFAULTS = {
   micLabel: '',
   speakerLabel: '',
   hotkey: 'Control+Space',
-  roam: true,
-  detectApps: true,
+  activation: 'key', // start talking with: 'key' (hotkey or click), 'wake' ("Hey Orbit" or click) or 'both'
+  roam: true, // fly around the screen on its own
+  detectApps: true, // let voice open any app from the Start menu (list stays on this PC)
   skin: 'metallic',
   browserControl: false, // let Gemini drive a separate Orbit browser window (browser.js)
   alertVoice: 'af_heart', // Kokoro voice for agent alerts (voice.js), used once the model is downloaded
+  faceAlerts: true, // agent alerts also show on Orbit's face: the agent's icon, an emoji and a word
   // Watch AI coding agents (see agent-watch.js): alerts, and approve buttons where the agent allows.
   watchClaude: false,
   watchCodex: false,
@@ -428,6 +431,7 @@ function saveConfig(cfg) {
 
 function registerHotkey(accel) {
   globalShortcut.unregisterAll();
+  if (loadConfig().activation === 'wake') return true; // wake word only: no hotkey
   try {
     return globalShortcut.register(accel, () => orbWin?.webContents.send('orb:toggle'));
   } catch {
@@ -607,6 +611,34 @@ ipcMain.handle('voice:speak', async (e, text) => {
   } catch (err) {
     console.error('voice', err);
     return null; // the robot page falls back to the Windows voice
+  }
+});
+
+// Wake word (wake.js): the model is downloaded from Settings only; clips come from the robot window.
+const wake = createWake({ cacheDir: path.join(app.getPath('userData'), 'models') });
+ipcMain.handle('wake:status', () => ({ downloaded: wake.downloaded() }));
+ipcMain.handle('wake:download', async (e) => {
+  if (!settingsWin || e.sender !== settingsWin.webContents) return { ok: false, error: 'Not allowed' };
+  try {
+    await wake.load({ allowDownload: true, onProgress: (p) => settingsWin?.webContents.send('wake:progress', p) });
+    return { ok: true };
+  } catch (err) {
+    return {
+      ok: false,
+      error: String(err?.message || err)
+        .split('\n')[0]
+        .slice(0, 160),
+    };
+  }
+});
+ipcMain.handle('wake:hear', async (e, pcm) => {
+  if (!orbWin || e.sender !== orbWin.webContents || !wake.downloaded()) return '';
+  if (!(pcm instanceof Float32Array) || pcm.length > 16000 * 3) return '';
+  try {
+    return await wake.hear(pcm);
+  } catch (err) {
+    console.error('wake', err);
+    return '';
   }
 });
 

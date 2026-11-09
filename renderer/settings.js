@@ -10,6 +10,7 @@ const fields = [
   'detectApps',
   'browserControl',
   'alertVoice',
+  'faceAlerts',
   'watchClaude',
   'watchCodex',
   'watchCopilot',
@@ -19,6 +20,7 @@ const fields = [
   'micLabel',
   'speakerLabel',
   'hotkey',
+  'activation',
   'systemPrompt',
 ];
 const $ = (id) => document.getElementById(id);
@@ -79,6 +81,23 @@ $('voiceDownload').addEventListener('click', async () => {
   $('voiceDownload').disabled = false;
   if (r.ok) showVoice({ downloaded: true });
   else voiceHint.textContent = `Download failed: ${r.error}`;
+});
+
+// ---------- wake word (Whisper tiny, wake.js): downloaded only when you click ----------
+const wakeHint = $('wakeHint');
+const showWake = ({ downloaded }) => {
+  $('wakeDownload').hidden = downloaded;
+  if (downloaded) wakeHint.textContent = 'The wake word model is ready. Say “Hey Orbit” when Orbit is idle.';
+};
+window.orbit.wakeStatus().then(showWake);
+window.orbit.onWakeProgress((p) => (wakeHint.textContent = `Downloading the wake word model… ${p}%`));
+$('wakeDownload').addEventListener('click', async () => {
+  $('wakeDownload').disabled = true;
+  wakeHint.textContent = 'Downloading the wake word model…';
+  const r = await window.orbit.wakeDownload();
+  $('wakeDownload').disabled = false;
+  if (r.ok) showWake({ downloaded: true });
+  else wakeHint.textContent = `Download failed: ${r.error}`;
 });
 
 // ---------- audio devices ----------

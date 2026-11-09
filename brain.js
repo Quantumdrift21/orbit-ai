@@ -229,7 +229,6 @@ class Brain {
   }
 
   goToBed() {
-    if (this.form === 'mech') this.transform('orb'); // naps as small Orbit
     const wa = this.workArea();
     this.target = this.home || { x: wa.x + wa.width - 110, y: wa.y + wa.height - 120 };
     this.mode = 'toBed';
@@ -281,9 +280,8 @@ class Brain {
         this.form = this.morph.to ? 'mech' : 'orb';
         this.morph = null;
         this.setLayout(this.form === 'mech' ? LAYOUTS.mech : LAYOUTS.orb);
-        // asked for mid-transformation (then ignored): defence only exists as AeroStrike, naps as Orbit
+        // asked for mid-transformation (then ignored): defence only exists as AeroStrike
         if (this.form === 'orb') this.defence = false;
-        else if (this.mode === 'toBed' || this.mode === 'sleep') this.transform('orb');
       }
     }
 
@@ -322,7 +320,6 @@ class Brain {
       const napDue =
         !this.defence && (this.mode === 'toBed' || (this.mode !== 'sleep' && t - this.lastInteraction > sleepAfter));
       if (parked && napDue) {
-        if (this.form === 'mech') this.transform('orb'); // naps as small Orbit, like goToBed
         this.mode = 'sleep';
         this.until = t + rand(...rhythm.nap);
       } else if (this.mode === 'journey' || this.mode === 'toBed') {
