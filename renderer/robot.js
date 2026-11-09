@@ -292,6 +292,29 @@ const SKINS = {
     },
     trim: { color: 0xf4f6fa, metalness: 1, roughness: 0.05, iridescence: 1, iridescenceIOR: 2.2 },
   },
+  // Hologram projector: translucent cyan with scanlines, glitch FX, floating particles
+  hologram: {
+    shell: {
+      color: 0x00ffff,
+      metalness: 0,
+      roughness: 0,
+      transmission: 0.95,
+      thickness: 0.5,
+      ior: 1.1,
+      clearcoat: 1,
+      clearcoatRoughness: 0,
+      envMapIntensity: 2,
+      emissive: 0x00ffff,
+      emissiveIntensity: 0.6,
+    },
+    trim: {
+      color: 0x00ffff,
+      metalness: 0,
+      roughness: 0,
+      emissive: 0x00ffff,
+      emissiveIntensity: 0.8,
+    },
+  },
 };
 export const SKIN_NAMES = Object.keys(SKINS);
 
@@ -368,6 +391,14 @@ export class Robot {
     this.def = null; // running defence move: { kind, side, start, nx, ny }
     this.guardS = 0; // fighting stance, eased in and out while defence mode is on
 
+    // Glitch spasms: random brief visual corruptions
+    this.glitch = { until: 0, intensity: 0, type: null }; // type: 'rgb' | 'scanline' | 'noise' | 'tear'
+    this.nextGlitch = rand(15, 40);
+
+    // Reaction faces (shown on face screen via faceCard.js)
+    this.reaction = null; // { emoji, text, until }
+    this.nextReaction = rand(20, 50);
+
     this.#setupRenderer();
     this.#buildRobot();
     this.resize();
@@ -440,6 +471,12 @@ export class Robot {
   /** Show a card (faceCard.js: icon, emoji, text) on the face screen for `secs`; null clears it. */
   showCard(card, secs = 6) {
     this.card = card ? { card, start: this.t, until: this.t + secs } : null;
+  }
+
+  /** Show a reaction face (emoji + optional text) on the face screen for `secs`. */
+  react(emoji, text = '', secs = 4) {
+    this.reaction = { emoji, text, until: this.t + secs };
+    this.nextReaction = this.t + rand(20, 50);
   }
 
   /** AeroStrike taunts: 'beckon' | 'flex' | 'cross' (random if not given). False while it's busy. */
@@ -776,6 +813,96 @@ export class Robot {
       this.faceTex.needsUpdate = true;
       return;
     }
+
+    // Reaction face (emoji + text) takes priority over normal face
+    if (this.reaction) {
+      if (t > this.reaction.until) {
+        this.reaction = null;
+      } else {
+        // Draw reaction face with emoji and text
+        g.fillStyle = c;
+        g.shadowColor = c;
+        g.shadowBlur = 20;
+        g.textAlign = 'center';
+        g.textBaseline = 'middle';
+        // Big emoji
+        g.font = 'bold 180px Segoe UI Emoji, Apple Color Emoji, Noto Color Emoji, sans-serif';
+        g.fillText(this.reaction.emoji, W / 2, H / 2 - 20);
+        // Optional text below
+        if (this.reaction.text) {
+          g.font = 'bold 36px Segoe UI, sans-serif';
+          g.fillText(this.reaction.text, W / 2, H / 2 + 80);
+        }
+        this.faceTex.needsUpdate = true;
+        return;
+      }
+    }
+
+    // Hologram skin: scanline glitch overlay
+    const isHologram = this.skin === 'hologram';
+    if (isHologram) {
+      // Subtle horizontal scanlines
+      g.globalAlpha = 0.08;
+      g.fillStyle = c;
+      for (let y = 0; y < H; y += 4) g.fillRect(0, y, W, 1);
+      g.globalAlpha = 1;
+      // Occasional "signal interference" lines
+      if (Math.random() < 0.02) {
+        g.globalAlpha = 0.3;
+        g.fillStyle = c;
+        const y = Math.random() * H;
+        g.fillRect(0, y, W, 2);
+        g.globalAlpha = 1;
+      }
+    }
+
+    // Glitch spasms: visual corruptions
+    if (this.glitch.until > t) {
+      const prog = (this.glitch.until - t) / (this.glitch.until - (this.glitch.until - 0.15)); // ~0..1
+      const intensity = this.glitch.intensity * (1 - prog);
+      const type = this.glitch.type;
+      g.globalCompositeOperation = type === 'rgb' ? 'difference' : 'source-over';
+      switch (type) {
+        case 'rgb': {
+          // RGB channel split
+          g.globalAlpha = intensity * 0.6;
+          g.fillStyle = '#ff0000';
+          g.fillRect(-intensity * 8, 0, W, H);
+          g.fillStyle = '#00ffff';
+          g.fillRect(intensity * 8, 0, W, H);
+          break;
+        }
+        case 'scanline': {
+          // Heavy scanline corruption
+          g.globalAlpha = intensity * 0.4;
+          g.fillStyle = c;
+          for (let y = 0; y < H; y += rand(2, 6)) {
+            const h = rand(1, 4);
+            g.fillRect(0, y, W, h);
+          }
+          break;
+        }
+        case 'noise': {
+          // Static noise
+          g.globalAlpha = intensity * 0.15;
+          g.fillStyle = '#fff';
+          for (let i = 0; i < 200 * intensity; i++) {
+            g.fillRect(Math.random() * W, Math.random() * H, 2, 2);
+          }
+          break;
+        }
+        case 'tear': {
+          // Horizontal tear/displacement
+          g.globalAlpha = intensity;
+          const tearY = Math.random() * H;
+          g.drawImage(this.faceCanvas, 0, tearY, W, 30, rand(-20, 20) * intensity, tearY, W, 30);
+          break;
+        }
+      }
+      g.globalCompositeOperation = 'source-over';
+      g.globalAlpha = 1;
+    }
+
     g.fillStyle = c;
     g.strokeStyle = c;
     g.lineCap = 'round';
@@ -997,6 +1124,42 @@ export class Robot {
     this.t += dt;
     const t = this.t;
     const st = this.state;
+
+    // Glitch spasms: random brief visual corruptions (more frequent on 'crazy' and 'hologram' skins)
+    if (t > this.nextGlitch) {
+      const isGlitchy = this.skin === 'crazy' || this.skin === 'hologram';
+      const chance = isGlitchy ? 0.5 : 0.15;
+      if (Math.random() < chance) {
+        const types = ['rgb', 'scanline', 'noise', 'tear'];
+        this.glitch.type = types[Math.floor(Math.random() * types.length)];
+        this.glitch.intensity = isGlitchy ? rand(0.6, 1) : rand(0.2, 0.5);
+        this.glitch.until = t + rand(0.08, 0.25);
+      }
+      this.nextGlitch = t + rand(isGlitchy ? 5 : 15, isGlitchy ? 15 : 40);
+    }
+
+    // Reaction faces: auto-trigger occasionally based on mood/events
+    if (this.reaction && t > this.reaction.until) this.reaction = null;
+    if (!this.reaction && !this.card && t > this.nextReaction) {
+      const mood = this.motion.mood;
+      const reactions = {
+        happy: [{ emoji: '😎', text: 'Looking good!' }, { emoji: '✨', text: 'Shiny!' }],
+        excited: [{ emoji: '🚀', text: 'Zoom!' }, { emoji: '⚡', text: 'ENERGY!' }],
+        bored: [{ emoji: '😴', text: '...' }, { emoji: '💤', text: 'Wake me up' }],
+        sleepy: [{ emoji: '😴', text: 'Zzz...' }, { emoji: '🌙', text: 'Nap time' }],
+        grumpy: [{ emoji: '😤', text: 'Hmph!' }, { emoji: '😠', text: 'Leave me alone' }],
+        calm: [{ emoji: '😊', text: 'Hi!' }, { emoji: '👋', text: 'Hello!' }],
+        drowsy: [{ emoji: '🥱', text: 'Yawn...' }, { emoji: '😪', text: 'So tired' }],
+        surprised: [{ emoji: '😲', text: 'Whoa!' }, { emoji: '😮', text: 'What?!' }],
+        excited: [{ emoji: '🤩', text: 'Amazing!' }],
+      };
+      const pool = reactions[mood] || reactions.calm;
+      if (Math.random() < 0.3 && pool.length) {
+        const r = pool[Math.floor(Math.random() * pool.length)];
+        this.react(r.emoji, r.text, 3);
+      }
+      this.nextReaction = t + rand(20, 50);
+    }
 
     // audio level (fast attack, slow release)
     let raw = 0;
