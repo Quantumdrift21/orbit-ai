@@ -19,11 +19,11 @@ const stuntPose = (tr) =>
   tr.name === 'loop' ? { style: 'loop', ...superheroLoop(tr.p) } : { style: tr.name, ...tuckedFlip(tr.p) };
 
 const STATE_COLORS = {
-  idle: '#38d9ff',
-  listening: '#3dffa8',
-  thinking: '#a77bff',
-  speaking: '#ffcf9e',
-  error: '#ff4d5e',
+  idle: '#ff2e88',      // hot pink
+  listening: '#00ffff', // cyan
+  thinking: '#ff00ff',  // magenta
+  speaking: '#ff6b00',  // orange
+  error: '#ff0044',     // red-pink
 };
 
 // Moods (from the brain, see mood.js): resting face, idle glow tint and how fast it bobs.
@@ -212,26 +212,27 @@ const SKIN_TEXTURES = { brushed: brushedRoughness, detail: panelDetail, leatherB
 // Every skin is a few settings on the two shared materials: the shell (body, dials, arm-orbs)
 // and the trim (bezel, antennas, rods). Strings name a texture above; anything unset uses BASE.
 const BASE_SHELL = {
-  color: 0xd2d6dd,
+  color: 0x1a1c20,      // dark gunmetal
   map: null,
   metalness: 1,
-  roughness: 0.42,
+  roughness: 0.15,      // very shiny
   roughnessMap: 'brushed',
   bumpMap: 'detail',
   bumpScale: 1.2,
-  clearcoat: 0.35,
-  clearcoatRoughness: 0.25,
+  clearcoat: 0.5,
+  clearcoatRoughness: 0.1,
   sheen: 0,
-  iridescence: 0,
-  envMapIntensity: 1,
+  iridescence: 0.3,
+  envMapIntensity: 1.2,
 };
 const BASE_TRIM = {
-  color: 0x2b2e34,
-  metalness: 0.85,
-  roughness: 0.32,
-  clearcoat: 0.4,
-  clearcoatRoughness: 0.3,
-  iridescence: 0,
+  color: 0x0a0b0d,      // almost black
+  metalness: 1,
+  roughness: 0.1,
+  clearcoat: 0.6,
+  clearcoatRoughness: 0.08,
+  iridescence: 0.5,
+  iridescenceIOR: 2.0,
 };
 const SKINS = {
   metallic: { shell: {}, trim: {} },
@@ -290,6 +291,29 @@ const SKINS = {
       clearcoatRoughness: 0.05,
     },
     trim: { color: 0xf4f6fa, metalness: 1, roughness: 0.05, iridescence: 1, iridescenceIOR: 2.2 },
+  },
+  // Hologram projector: translucent cyan with scanlines, glitch FX, floating particles
+  hologram: {
+    shell: {
+      color: 0x00ffff,
+      metalness: 0,
+      roughness: 0,
+      transmission: 0.95,
+      thickness: 0.5,
+      ior: 1.1,
+      clearcoat: 1,
+      clearcoatRoughness: 0,
+      envMapIntensity: 2,
+      emissive: 0x00ffff,
+      emissiveIntensity: 0.6,
+    },
+    trim: {
+      color: 0x00ffff,
+      metalness: 0,
+      roughness: 0,
+      emissive: 0x00ffff,
+      emissiveIntensity: 0.8,
+    },
   },
 };
 export const SKIN_NAMES = Object.keys(SKINS);
@@ -367,6 +391,14 @@ export class Robot {
     this.def = null; // running defence move: { kind, side, start, nx, ny }
     this.guardS = 0; // fighting stance, eased in and out while defence mode is on
 
+    // Glitch spasms: random brief visual corruptions
+    this.glitch = { until: 0, intensity: 0, type: null }; // type: 'rgb' | 'scanline' | 'noise' | 'tear'
+    this.nextGlitch = rand(15, 40);
+
+    // Reaction faces (shown on face screen via faceCard.js)
+    this.reaction = null; // { emoji, text, until }
+    this.nextReaction = rand(20, 50);
+
     this.#setupRenderer();
     this.#buildRobot();
     this.resize();
@@ -441,6 +473,12 @@ export class Robot {
     this.card = card ? { card, start: this.t, until: this.t + secs } : null;
   }
 
+  /** Show a reaction face (emoji + optional text) on the face screen for `secs`. */
+  react(emoji, text = '', secs = 4) {
+    this.reaction = { emoji, text, until: this.t + secs };
+    this.nextReaction = this.t + rand(20, 50);
+  }
+
   /** AeroStrike taunts: 'beckon' | 'flex' | 'cross' (random if not given). False while it's busy. */
   taunt(kind) {
     if (!TAUNTS[kind]) kind = Object.keys(TAUNTS)[Math.floor(Math.random() * 3)];
@@ -480,11 +518,18 @@ export class Robot {
 
     const key = new THREE.DirectionalLight(0xffffff, 1.4);
     key.position.set(-3, 4, 5);
-    const rim = new THREE.DirectionalLight(0xbfe9ff, 1.2);
-    rim.position.set(3, 2, -4);
+    
+    // Cyberpunk rim lights - magenta and cyan
+    const rim1 = new THREE.DirectionalLight(0xff00ff, 1.8);
+    rim1.position.set(4, 1, -3);
+    const rim2 = new THREE.DirectionalLight(0x00ffff, 1.5);
+    rim2.position.set(-4, 1, -3);
+    const rim3 = new THREE.DirectionalLight(0xff2e88, 1.2);
+    rim3.position.set(0, -3, -4);
+    
     this.faceLight = new THREE.PointLight(this.accent, 1.2, 4, 2);
     this.faceLight.position.set(0, 0, 1.7);
-    this.scene.add(key, rim, this.faceLight);
+    this.scene.add(key, rim1, rim2, rim3, this.faceLight);
   }
 
   #buildRobot() {
@@ -500,7 +545,7 @@ export class Robot {
     this.glowMats = []; // everything tinted with the accent colour
     const glowMat = (intensity) => {
       const m = new THREE.MeshStandardMaterial({
-        color: 0x111111,
+        color: 0x080808,
         emissive: this.accent.clone(),
         emissiveIntensity: intensity,
       });
@@ -563,14 +608,14 @@ export class Robot {
     const screen = new THREE.Mesh(
       cap(1.022, fw, fh),
       new THREE.MeshPhysicalMaterial({
-        color: 0x04060a,
+        color: 0x000000,
         metalness: 0,
-        roughness: 0.1,
+        roughness: 0.05,
         clearcoat: 1,
-        clearcoatRoughness: 0.04,
+        clearcoatRoughness: 0.02,
         emissive: 0xffffff,
         emissiveMap: this.faceTex,
-        emissiveIntensity: 1.7,
+        emissiveIntensity: 2.0,
       }),
     );
     this.head.add(screen);
@@ -768,6 +813,96 @@ export class Robot {
       this.faceTex.needsUpdate = true;
       return;
     }
+
+    // Reaction face (emoji + text) takes priority over normal face
+    if (this.reaction) {
+      if (t > this.reaction.until) {
+        this.reaction = null;
+      } else {
+        // Draw reaction face with emoji and text
+        g.fillStyle = c;
+        g.shadowColor = c;
+        g.shadowBlur = 20;
+        g.textAlign = 'center';
+        g.textBaseline = 'middle';
+        // Big emoji
+        g.font = 'bold 180px Segoe UI Emoji, Apple Color Emoji, Noto Color Emoji, sans-serif';
+        g.fillText(this.reaction.emoji, W / 2, H / 2 - 20);
+        // Optional text below
+        if (this.reaction.text) {
+          g.font = 'bold 36px Segoe UI, sans-serif';
+          g.fillText(this.reaction.text, W / 2, H / 2 + 80);
+        }
+        this.faceTex.needsUpdate = true;
+        return;
+      }
+    }
+
+    // Hologram skin: scanline glitch overlay
+    const isHologram = this.skin === 'hologram';
+    if (isHologram) {
+      // Subtle horizontal scanlines
+      g.globalAlpha = 0.08;
+      g.fillStyle = c;
+      for (let y = 0; y < H; y += 4) g.fillRect(0, y, W, 1);
+      g.globalAlpha = 1;
+      // Occasional "signal interference" lines
+      if (Math.random() < 0.02) {
+        g.globalAlpha = 0.3;
+        g.fillStyle = c;
+        const y = Math.random() * H;
+        g.fillRect(0, y, W, 2);
+        g.globalAlpha = 1;
+      }
+    }
+
+    // Glitch spasms: visual corruptions
+    if (this.glitch.until > t) {
+      const prog = (this.glitch.until - t) / (this.glitch.until - (this.glitch.until - 0.15)); // ~0..1
+      const intensity = this.glitch.intensity * (1 - prog);
+      const type = this.glitch.type;
+      g.globalCompositeOperation = type === 'rgb' ? 'difference' : 'source-over';
+      switch (type) {
+        case 'rgb': {
+          // RGB channel split
+          g.globalAlpha = intensity * 0.6;
+          g.fillStyle = '#ff0000';
+          g.fillRect(-intensity * 8, 0, W, H);
+          g.fillStyle = '#00ffff';
+          g.fillRect(intensity * 8, 0, W, H);
+          break;
+        }
+        case 'scanline': {
+          // Heavy scanline corruption
+          g.globalAlpha = intensity * 0.4;
+          g.fillStyle = c;
+          for (let y = 0; y < H; y += rand(2, 6)) {
+            const h = rand(1, 4);
+            g.fillRect(0, y, W, h);
+          }
+          break;
+        }
+        case 'noise': {
+          // Static noise
+          g.globalAlpha = intensity * 0.15;
+          g.fillStyle = '#fff';
+          for (let i = 0; i < 200 * intensity; i++) {
+            g.fillRect(Math.random() * W, Math.random() * H, 2, 2);
+          }
+          break;
+        }
+        case 'tear': {
+          // Horizontal tear/displacement
+          g.globalAlpha = intensity;
+          const tearY = Math.random() * H;
+          g.drawImage(this.faceCanvas, 0, tearY, W, 30, rand(-20, 20) * intensity, tearY, W, 30);
+          break;
+        }
+      }
+      g.globalCompositeOperation = 'source-over';
+      g.globalAlpha = 1;
+    }
+
     g.fillStyle = c;
     g.strokeStyle = c;
     g.lineCap = 'round';
@@ -989,6 +1124,42 @@ export class Robot {
     this.t += dt;
     const t = this.t;
     const st = this.state;
+
+    // Glitch spasms: random brief visual corruptions (more frequent on 'crazy' and 'hologram' skins)
+    if (t > this.nextGlitch) {
+      const isGlitchy = this.skin === 'crazy' || this.skin === 'hologram';
+      const chance = isGlitchy ? 0.5 : 0.15;
+      if (Math.random() < chance) {
+        const types = ['rgb', 'scanline', 'noise', 'tear'];
+        this.glitch.type = types[Math.floor(Math.random() * types.length)];
+        this.glitch.intensity = isGlitchy ? rand(0.6, 1) : rand(0.2, 0.5);
+        this.glitch.until = t + rand(0.08, 0.25);
+      }
+      this.nextGlitch = t + rand(isGlitchy ? 5 : 15, isGlitchy ? 15 : 40);
+    }
+
+    // Reaction faces: auto-trigger occasionally based on mood/events
+    if (this.reaction && t > this.reaction.until) this.reaction = null;
+    if (!this.reaction && !this.card && t > this.nextReaction) {
+      const mood = this.motion.mood;
+      const reactions = {
+        happy: [{ emoji: '😎', text: 'Looking good!' }, { emoji: '✨', text: 'Shiny!' }],
+        excited: [{ emoji: '🚀', text: 'Zoom!' }, { emoji: '⚡', text: 'ENERGY!' }],
+        bored: [{ emoji: '😴', text: '...' }, { emoji: '💤', text: 'Wake me up' }],
+        sleepy: [{ emoji: '😴', text: 'Zzz...' }, { emoji: '🌙', text: 'Nap time' }],
+        grumpy: [{ emoji: '😤', text: 'Hmph!' }, { emoji: '😠', text: 'Leave me alone' }],
+        calm: [{ emoji: '😊', text: 'Hi!' }, { emoji: '👋', text: 'Hello!' }],
+        drowsy: [{ emoji: '🥱', text: 'Yawn...' }, { emoji: '😪', text: 'So tired' }],
+        surprised: [{ emoji: '😲', text: 'Whoa!' }, { emoji: '😮', text: 'What?!' }],
+        excited: [{ emoji: '🤩', text: 'Amazing!' }],
+      };
+      const pool = reactions[mood] || reactions.calm;
+      if (Math.random() < 0.3 && pool.length) {
+        const r = pool[Math.floor(Math.random() * pool.length)];
+        this.react(r.emoji, r.text, 3);
+      }
+      this.nextReaction = t + rand(20, 50);
+    }
 
     // audio level (fast attack, slow release)
     let raw = 0;

@@ -26,6 +26,11 @@ const BROWSERS = {
       path.join(env.ProgramFiles || '', 'BraveSoftware/Brave-Browser/Application/brave.exe'),
       path.join(env.LOCALAPPDATA || '', 'BraveSoftware/Brave-Browser/Application/brave.exe'),
     ),
+  firefox: () =>
+    firstExisting(
+      path.join(env.ProgramFiles || '', 'Mozilla Firefox/firefox.exe'),
+      path.join(env['ProgramFiles(x86)'] || '', 'Mozilla Firefox/firefox.exe'),
+    ),
 };
 
 // name → fixed target for `start` (exe on PATH/App Paths, or a protocol URI)
@@ -33,6 +38,7 @@ const APPS = {
   chrome: 'chrome',
   edge: 'msedge',
   brave: 'brave',
+  firefox: 'firefox',
   notepad: 'notepad',
   calculator: 'calc',
   'file explorer': 'explorer',
@@ -40,6 +46,8 @@ const APPS = {
   settings: 'ms-settings:',
   'task manager': 'taskmgr',
   'command prompt': 'cmd',
+  powershell: 'powershell',
+  terminal: 'wt',
   'vs code': 'code',
   spotify: 'spotify:',
   whatsapp: 'whatsapp:',
@@ -48,6 +56,9 @@ const APPS = {
   vlc: 'vlc',
   camera: 'microsoft.windows.camera:',
   photos: 'ms-photos:',
+  discord: 'discord:',
+  telegram: 'telegram:',
+  blender: 'blender',
 };
 
 const norm = (s) =>

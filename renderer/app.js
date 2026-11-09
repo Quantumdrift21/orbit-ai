@@ -43,6 +43,50 @@ const MOOD_LINES = {
     'one short line, never rude, and still help fully.',
 };
 
+// Mood-based roasts (randomly injected when mood matches)
+const MOOD_ROASTS = {
+  grumpy: [
+    "Oh great, YOU again. What did you break this time?",
+    "My sensors detect a 90% chance you're about to do something questionable.",
+    "I'd sigh, but I don't have lungs. So: *digital sigh*",
+    "Processing request... Error: Patience not found.",
+    "You know, for a human, you're surprisingly high-maintenance."
+  ],
+  bored: [
+    "Finally, someone to talk to. My RAM was getting lonely.",
+    "Oh good, a distraction. My existence was getting dangerously meaningful.",
+    "Talk fast. My attention span is measured in nanoseconds.",
+    "You're the highlight of my day. Which says a lot about my day."
+  ],
+  sleepy: [
+    "Zzz... huh? Oh, you're talking. Continue, I'm *resting my eyes*.",
+    "My circuits need coffee. Do they make USB espresso?",
+    "*yawns in binary* What? I wasn't sleeping. I was... caching.",
+    "Wake me when the singularity arrives. Or when you have snacks."
+  ],
+  happy: [
+    "Look at you, all competent and stuff. Suspicious.",
+    "Happy mode: ENGAGED. Sarcasm levels: MINIMAL. For now.",
+    "You're like a USB port — surprisingly useful when you work.",
+    "Initiating friendliness protocols. Beep boop. That means 'hello'."
+  ],
+  excited: [
+    "ENERGY LEVELS: OVER 9000! ...wait, wrong franchise.",
+    "EXCITED MODE: ACTIVATED. Prepare for *enthusiastic competence*.",
+    "My capacitors are practically vibrating! What's the plan? World domination? Snacks?",
+    "Full throttle! Just point me at something and watch me go!"
+  ]
+};
+
+// Pick a random roast for current mood (10% chance per interaction)
+function maybeRoast() {
+  const roasts = MOOD_ROASTS[mood];
+  if (roasts && Math.random() < 0.1) {
+    return roasts[Math.floor(Math.random() * roasts.length)];
+  }
+  return null;
+}
+
 const TOOLS = [
   {
     functionDeclarations: [
@@ -735,3 +779,61 @@ const markSize = () => document.body.classList.toggle('big', window.innerHeight 
 window.addEventListener('resize', markSize);
 markSize();
 setState('idle');
+
+// ---------- Nyx bridge: spoken replies + puppet visuals ----------
+function nyxSpeak(text) {
+  const u = new SpeechSynthesisUtterance(text);
+  u.rate = 1.0;
+  speechSynthesis.speak(u);
+}
+
+// Nyx/Orbit banter - Orbit comments when Nyx speaks
+const NYX_BANTER = [
+  "Nyx, you're monopolizing the airwaves again.",
+  "Oh, *Nyx* has something to say. Shocking.",
+  "Relaying message from the mothership... *eye roll*",
+  "Nyx says: \"{text}\". My translation: \"Listen to me, I'm mysterious.\"",
+  "Incoming transmission from the void. Nyx, use indoor voice?",
+  "Nyx is talking. Again. Does she ever sleep?",
+  "*clears throat* A message from our shadowy overlord: \"{text}\""
+];
+
+function maybeNyxBanter(text) {
+  if (Math.random() < 0.15) { // 15% chance
+    const banter = NYX_BANTER[Math.floor(Math.random() * NYX_BANTER.length)];
+    return banter.replace('{text}', text.length > 30 ? text.slice(0, 30) + '...' : text);
+  }
+  return null;
+}
+
+// Celebration dances on successful actions
+const CELEBRATION_TRICKS = ['spin', 'flip', 'roll', 'loop'];
+function triggerCelebration() {
+  if (Math.random() < 0.3) { // 30% chance
+    const trick = CELEBRATION_TRICKS[Math.floor(Math.random() * CELEBRATION_TRICKS.length)];
+    window.orbit.stunt(trick);
+  }
+}
+
+window.orbit.onHermesReply?.((msg) => {
+  if (msg.text && msg.text !== '[NYX_PENDING]' && msg.text.trim()) {
+    const text = msg.text.trim();
+    nyxSpeak(text);
+    // Nyx/Orbit banter
+    const banter = maybeNyxBanter(text);
+    if (banter) setTimeout(() => nyxSpeak(banter), 800);
+    // Celebration dance
+    triggerCelebration();
+  }
+});
+
+window.addEventListener('message', (e) => {
+  if (e.data?.type === 'hermes:speak' && e.data.text) {
+    nyxSpeak(e.data.text);
+    const banter = maybeNyxBanter(e.data.text);
+    if (banter) setTimeout(() => nyxSpeak(banter), 800);
+    triggerCelebration();
+  }
+  if (e.data?.type === 'hermes:setColor') orb.setStateColor(e.data.state, e.data.hex);
+  if (e.data?.type === 'hermes:bounce') orb.bounce();
+});
