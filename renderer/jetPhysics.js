@@ -14,11 +14,14 @@ const clamp = (v, a, b) => Math.max(a, Math.min(b, v));
 
 /**
  * How hard the engine needs to burn: hovering, plus flying fast, plus climbing (vy < 0 is up on
- * screen), plus bursts on a stunt's jump and a defence recoil. 0..1.4 (above 1 = afterburner).
+ * screen), plus bursts on a stunt's jump and a defence recoil, plus
+ * speeding up (`accel` px/s², braking lowers it) and turning hard (`turn` rad/s). 0..1.4 (above 1 = afterburner).
  */
-export function thrustDemand({ speed = 0, vy = 0, lift = 0, recoil = 0, idle = 0.3 } = {}) {
+export function thrustDemand({ speed = 0, vy = 0, lift = 0, recoil = 0, idle = 0.3, accel = 0, turn = 0 } = {}) {
   return clamp(
     idle +
+      clamp(accel / 1500, -0.6, 1) * 0.3 + // flare speeding up, ease off coasting/braking
+      Math.min(1, Math.abs(turn) / 3) * 0.15 + // hard turns burn more
       Math.min(1, speed / 600) * 0.5 +
       Math.min(1, Math.max(0, -vy) / 500) * 0.35 +
       lift * 0.8 +

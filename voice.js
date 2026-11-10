@@ -4,16 +4,19 @@
 // never goes online (remote models are switched off). Voices ship inside the kokoro-js package.
 // Until it's ready, the robot page uses the Windows voice instead.
 const fs = require('fs');
+const os = require('os');
 const path = require('path');
 
 const MODEL = 'onnx-community/Kokoro-82M-v1.0-ONNX';
 const DTYPE = 'q8'; // 8-bit weights: ~90 MB, near full quality
 const MAX_CHARS = 400; // alerts are one or two sentences
+const CACHE = 40; // recent sentences kept as audio: a repeated alert ("Claude needs your approval…") is instant
 
 /** @param {{ cacheDir: string }} opts */
 function createVoice({ cacheDir }) {
   let tts = null;
   let loading = null;
+  const cache = new Map(); // `${voice}|${text}` -> { pcm, rate, secs }
 
   const modelFile = () => path.join(cacheDir, ...MODEL.split('/'), 'onnx', 'model_quantized.onnx');
   const downloaded = () => fs.existsSync(modelFile());
@@ -35,6 +38,8 @@ function createVoice({ cacheDir }) {
       tts = await KokoroTTS.from_pretrained(MODEL, {
         dtype: DTYPE,
         device: 'cpu',
+        // all the CPU's threads: a third faster than the default on a 4-core laptop (DirectML can't run it)
+        session_options: { intraOpNumThreads: Math.min(8, os.cpus().length) },
         progress_callback: (p) => {
           if (p.status === 'progress' && p.file?.endsWith('.onnx')) onProgress(Math.round(p.progress));
         },
@@ -51,8 +56,19 @@ function createVoice({ cacheDir }) {
   async function speak(text, voice = 'af_heart') {
     const model = await load();
     const name = model.voices[voice] ? voice : 'af_heart';
-    const audio = await model.generate(String(text).slice(0, MAX_CHARS), { voice: name });
-    return { pcm: audio.audio, rate: audio.sampling_rate, secs: audio.audio.length / audio.sampling_rate };
+    const line = String(text).slice(0, MAX_CHARS);
+    const key = `${name}|${line}`;
+    const hit = cache.get(key);
+    if (hit) {
+      cache.delete(key); // most recently used goes to the back
+      cache.set(key, hit);
+      return hit;
+    }
+    const audio = await model.generate(line, { voice: name });
+    const out = { pcm: audio.audio, rate: audio.sampling_rate, secs: audio.audio.length / audio.sampling_rate };
+    cache.set(key, out);
+    if (cache.size > CACHE) cache.delete(cache.keys().next().value);
+    return out;
   }
 
   return { downloaded, load, speak, voices: () => tts?.voices };

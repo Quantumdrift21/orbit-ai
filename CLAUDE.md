@@ -32,7 +32,7 @@ naps, daily rhythm, moods via `mood.js`, stunt timing, transformation progress, 
 with `setBounds` (never `setPosition`: it grows the window on scaled displays). It sends a `motion` message to the
 renderer every tick; the renderer mostly _draws_ that state. Click-through is decided in the brain too:
 `setIgnoreMouseEvents` toggles on a hit ellipse taken from the current layout in `form.js` (Orbit 200×230 vs. the
-grown/mech 360×420 window, which keeps the robot on the same spot via `moveFor`).
+grown/mech 240×280 window, which keeps the robot on the same spot via `moveFor`; AeroStrike is drawn to the window height, so that size is its on-screen size).
 
 **Renderer** (`renderer/`, plain ES modules, no bundler): `app.js` wires everything — Gemini Live session
 (`gemini.js`, a WebSocket opened directly from the renderer), mic/speaker (`audio.js` + `pcm-worklet.js`, 16 kHz
@@ -70,7 +70,8 @@ exhaust is shifted by the window's own velocity each frame so it trails on the d
 
 **Values that must stay in sync across files:** `TRANSFORM_SECS` (form.js) ↔ `SECS` (sfx.js); `easeInOut`
 (brain.js) ↔ flip.js (the loop flies the window and turns the body on the same curve); `SKIN_LABELS` (main.js) ↔
-`SKIN_NAMES` (robot.js); `depthScale` (flight.js ↔ renderer/heading.js: the brain's hit area and the drawn
+`TRANSFORM_SECS` (form.js ↔ renderer/sfx.js `SECS`, 4.4 s; the step slots are `STEPS` in renderer/mech.js and the
+wind-up/ignition bumps in robot.js follow them); `SKIN_NAMES` (robot.js); `depthScale` (flight.js ↔ renderer/heading.js: the brain's hit area and the drawn
 size must agree); `DEFENCE_SECS` (defend.js) is used by app.js, robot.js and sfx.js timings.
 
 **Flight attitude.** `robot.js` wraps the robot in a `flight` group (Euler order YXZ) that `heading.js` turns toward
@@ -133,8 +134,24 @@ new root-level module must be added there or the installed app won't find it. `o
 `asarUnpack` because native modules can't load from the asar. Keep the README's project-layout table in step with
 new files.
 
-**Wake word and transformation effects.** `wake.js` (main) runs Whisper tiny.en via `@huggingface/transformers` on
+**Offline models run in `models-host.js`**, a utilityProcess started by main.js (`modelHost.call('voice.speak' | 'wake.hear' | '*.load')`): running Kokoro or Whisper in the main process froze hook replies and bubbles for 15–20 s at a time. main.js keeps voice.js/wake.js only for the cheap `downloaded()` checks. The alert bubble is shown before the speech is synthesized, then re-timed.
+
+**Wake word.** `wake.js` runs Whisper tiny.en via `@huggingface/transformers` on
 short clips cut by `renderer/wakeword.js` (energy-based segmenter, `isWake`); the wake mic only runs while idle and
 `cfg.activation` is `wake`/`both`, and the hotkey isn't registered for `wake`. Both offline models read from
 `userData/models` with `env.localModelPath` + `allowLocalModels` (allowRemoteModels only for the Settings download).
-`renderer/morphFx.js` draws the transformation effects (normal blending), keyed off the morph progress only.
+**Float-target gotcha (for any future post-processing):** `pow()` of a negative base is NaN in GLSL; on screen NaN
+clamps to black/transparent, but in a float render target it survives and spreads. Clamp every `pow` base.
+
+**Ambush and dictation.** `ambush.js` (pure) decides when AeroStrike fires across the screen; brain.js calls
+`onAmbush({x0,y0,x1,y1})` (screen px), main.js shows a click-through overlay window (`renderer/laser.*`, 2D canvas
+beam) over the robot's display and tells the robot page to pose (`robot.defend('laser', nx, ny, true)`: the in-window
+beam is hidden for long shots). Dictation: Gemini's `type_text` tool -> IPC `type:text` -> clipboard + SendKeys ^v,
+clipboard restored; the robot window is `focusable: false` so clicking it never takes the focus off your text box.
+
+**Teleport.** `teleport.js` (pure) decides when (`SHARE` of long journeys in `decide`, `shouldEscape` in the dodge
+block) and where (`pickDestination` via avoid.goodSpot, `escapeSpot`). brain.js runs mode `teleport`: holds still,
+jumps the window at `JUMP` (0.5) of `TELEPORT_SECS[form]`, then rests; the motion payload carries
+`tele: { p, dx, dy }`. robot.js applies `renderer/warp.js` `warpPose(p, form)` to `root` (scale/visibility along the
+jump direction, jets via `lift`, the `warpRing` shockwave for the mech) and resets root scale/visible every frame.
+The laser overlay draws the desktop streak (`kind: 'streak'` on the `ambush` channel); sfx.js `playTeleport`.

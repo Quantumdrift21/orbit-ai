@@ -2,9 +2,9 @@
 // transformation, a clank as each part locks into place, and a power-up (or power-down) at the end.
 // Played on Orbit's own audio output, so they come out of the speaker chosen in Settings.
 
-const SECS = 3.2; // must match TRANSFORM_SECS in form.js
+const SECS = 4.4; // must match TRANSFORM_SECS in form.js
 // Moments parts lock into place (fractions of the transformation, from mech.js time slots).
-const LOCKS = [0.32, 0.42, 0.52, 0.62, 0.66, 0.74, 0.8, 0.9];
+const LOCKS = [0.36, 0.46, 0.52, 0.62, 0.68, 0.78, 0.84, 0.92]; // one clank as each step locks (mech.js STEPS)
 
 function clank(ctx, out, t) {
   // short metallic noise burst through a band-pass filter...
@@ -188,6 +188,14 @@ export function playTransform(ctx, up) {
   whirr.stop(t0 + SECS);
 
   for (const p of LOCKS) clank(ctx, out, t0 + (up ? p : 1 - p) * SECS);
+  if (up) {
+    // the shell opening: a boot click, vent hisses, the panel release
+    clank(ctx, out, t0 + 0.02 * SECS);
+    hiss(ctx, out, t0, 0.3, 0.05);
+    clank(ctx, out, t0 + 0.06 * SECS);
+    hiss(ctx, out, t0 + 0.1 * SECS, 0.45, 0.06);
+    clank(ctx, out, t0 + 0.2 * SECS);
+  }
 
   const end = t0 + SECS - 0.15;
   if (up) {
@@ -195,5 +203,61 @@ export function playTransform(ctx, up) {
     tone(ctx, out, end + 0.05, 495, 990, 0.06, 0.7);
   } else {
     tone(ctx, out, end, 660, 220, 0.07, 0.6); // power-down
+  }
+}
+
+/** A vent of steam: filtered noise swelling and dying over `secs`. */
+function hiss(ctx, out, start, secs, gain) {
+  const buf = ctx.createBuffer(1, Math.ceil(ctx.sampleRate * secs), ctx.sampleRate);
+  const d = buf.getChannelData(0);
+  for (let i = 0; i < d.length; i++) d[i] = Math.random() * 2 - 1;
+  const src = ctx.createBufferSource();
+  src.buffer = buf;
+  const f = ctx.createBiquadFilter();
+  f.type = 'highpass';
+  f.frequency.value = 2500;
+  const g = ctx.createGain();
+  g.gain.setValueAtTime(0, start);
+  g.gain.linearRampToValueAtTime(gain, start + secs * 0.25);
+  g.gain.linearRampToValueAtTime(0, start + secs);
+  src.connect(f).connect(g).connect(out);
+  src.start(start);
+  src.stop(start + secs);
+}
+
+/** The teleport: Orbit zips away with a rising sweep and pops back in; AeroStrike's jets roar, then a boom. */
+export function playTeleport(ctx, form) {
+  if (!ctx) return;
+  if (ctx.state === 'suspended') ctx.resume().catch(() => {});
+  const t0 = ctx.currentTime + 0.05;
+  const out = ctx.createGain();
+  out.gain.value = 0.55;
+  out.connect(ctx.destination);
+  const noise = (start, secs, from, to, gain, q = 0.8) => {
+    const buf = ctx.createBuffer(1, Math.ceil(ctx.sampleRate * secs), ctx.sampleRate);
+    const d = buf.getChannelData(0);
+    for (let i = 0; i < d.length; i++) d[i] = Math.random() * 2 - 1;
+    const src = ctx.createBufferSource();
+    src.buffer = buf;
+    const f = ctx.createBiquadFilter();
+    f.type = 'bandpass';
+    f.Q.value = q;
+    f.frequency.setValueAtTime(from, start);
+    f.frequency.linearRampToValueAtTime(to, start + secs);
+    const g = ctx.createGain();
+    g.gain.setValueAtTime(0, start);
+    g.gain.linearRampToValueAtTime(gain, start + secs * 0.3);
+    g.gain.linearRampToValueAtTime(0, start + secs);
+    src.connect(f).connect(g).connect(out);
+    src.start(start);
+    src.stop(start + secs);
+  };
+  if (form === 'mech') {
+    noise(t0, 0.55, 300, 1400, 0.16, 0.6); // jets roar up
+    tone(ctx, out, t0 + 0.6, 70, 40, 0.28, 0.3); // the boom of the jump
+    noise(t0 + 0.62, 0.25, 2000, 600, 0.08, 1.2); // arrival rush
+  } else {
+    tone(ctx, out, t0, 400, 2400, 0.08, 0.4); // zip
+    noise(t0 + 0.48, 0.08, 1800, 1800, 0.1, 2); // pop
   }
 }

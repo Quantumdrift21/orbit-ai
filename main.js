@@ -1,4 +1,16 @@
-const { app, BrowserWindow, ipcMain, globalShortcut, Menu, safeStorage, screen, session, shell } = require('electron');
+const {
+  app,
+  BrowserWindow,
+  clipboard,
+  globalShortcut,
+  ipcMain,
+  Menu,
+  safeStorage,
+  screen,
+  session,
+  shell,
+  utilityProcess,
+} = require('electron');
 const path = require('path');
 const fs = require('fs');
 const os = require('os');
@@ -24,6 +36,8 @@ const SKIN_LABELS = {
   velvet: 'Velvet',
   crazy: 'Crazy (holographic)',
 };
+// Must match CHARACTER_NAMES in renderer/robot.js.
+const CHARACTER_LABELS = { og: 'OG (Orbit and AeroStrike)', flow: 'Flow (genie and mage)' };
 
 // Let the orb play Gemini's audio without needing a click first.
 app.commandLine.appendSwitch('autoplay-policy', 'no-user-gesture-required');
@@ -50,8 +64,11 @@ const DEFAULTS = {
   roam: true, // fly around the screen on its own
   detectApps: true, // let voice open any app from the Start menu (list stays on this PC)
   skin: 'metallic',
+  character: 'og', // 'og' (Orbit and AeroStrike) or 'flow' (the genie and the mage)
   browserControl: false, // let Gemini drive a separate Orbit browser window (browser.js)
   alertVoice: 'af_heart', // Kokoro voice for agent alerts (voice.js), used once the model is downloaded
+  dictation: true, // Gemini may type what you dictate (corrected English, or a summary) into your focused text box
+  teleport: true, // now and then it teleports instead of flying, and may blink away from a fast swipe
   faceAlerts: true, // agent alerts also show on Orbit's face: the agent's icon, an emoji and a word
   // Watch AI coding agents (see agent-watch.js): alerts, and approve buttons where the agent allows.
   watchClaude: false,
@@ -153,6 +170,7 @@ function createOrbWindow() {
     hasShadow: false,
     title: 'Orbit AI',
     skipTaskbar: true,
+    focusable: false, // clicking the robot never steals focus: what you dictate lands in your text box
     webPreferences: {
       preload: path.join(__dirname, 'preload.js'),
       contextIsolation: true,
@@ -165,7 +183,17 @@ function createOrbWindow() {
 
   // The brain moves the window, decides click-through and tells the robot where the mouse is.
   brain = new Brain(orbWin, ANCHOR);
+  brain.onTeleport = (b) => showLaser({ ...b, kind: 'streak' }); // the streak across the desktop
+  brain.onAmbush = (b) => {
+    showLaser(b);
+    // the robot poses and aims its core the same way (direction only; the overlay draws the beam)
+    const dx = b.x1 - b.x0;
+    const dy = b.y1 - b.y0;
+    const n = Math.max(Math.abs(dx), Math.abs(dy)) || 1;
+    orbWin?.webContents.send('ambush', { nx: dx / n, ny: -dy / n });
+  };
   brain.setEnabled(loadConfig().roam !== false);
+  brain.teleportEnabled = loadConfig().teleport !== false;
   syncTypingWatch();
 
   orbWin.on('closed', () => {
@@ -210,6 +238,7 @@ ipcMain.handle('config:get', () => loadConfig());
 ipcMain.handle('config:set', async (_e, cfg) => {
   const before = loadConfig();
   saveConfig(cfg);
+  if (brain) brain.teleportEnabled = cfg.teleport !== false;
   if (cfg.detectApps === false) actions.setInstalledApps([]);
   else if (before.detectApps === false) scanApps();
   // Install or remove hooks for each AI agent whose checkbox changed.
@@ -273,13 +302,49 @@ ipcMain.handle('browser:run', async (e, name, args) => {
   return result;
 });
 
+// The offline models run in their own process (models-host.js): loading or running Kokoro or Whisper in
+// this process froze it for seconds (hook replies, bubbles and the robot's motion all stalled). voice.js
+// and wake.js here are only used for their cheap downloaded() checks.
+const modelsDir = path.join(app.getPath('userData'), 'models');
+const modelHost = (() => {
+  let child = null;
+  let nextId = 1;
+  const waiting = new Map();
+  const onProgress = { voice: null, wake: null };
+  const start = () => {
+    child = utilityProcess.fork(path.join(__dirname, 'models-host.js'), [modelsDir], { serviceName: 'Orbit models' });
+    child.on('message', (m) => {
+      if (m?.event === 'progress') return onProgress[m.op]?.(m.value);
+      const w = waiting.get(m?.id);
+      if (!w) return;
+      waiting.delete(m.id);
+      m.ok ? w.resolve(m.result) : w.reject(new Error(m.error));
+    });
+    child.on('exit', () => {
+      child = null;
+      for (const w of waiting.values()) w.reject(new Error('The models process stopped'));
+      waiting.clear();
+    });
+  };
+  /** Ask the host to run `op` with `args`; resolves with its result. */
+  const call = (op, ...args) =>
+    new Promise((resolve, reject) => {
+      if (!child) start();
+      const id = nextId++;
+      waiting.set(id, { resolve, reject });
+      child.postMessage({ id, op, args });
+    });
+  return { call, onProgress };
+})();
+
 // Natural alert voice (voice.js): downloaded from Settings only; spoken for the robot window.
-const voice = createVoice({ cacheDir: path.join(app.getPath('userData'), 'models') });
+const voice = createVoice({ cacheDir: modelsDir });
 ipcMain.handle('voice:status', () => ({ downloaded: voice.downloaded() }));
 ipcMain.handle('voice:download', async (e) => {
   if (!settingsWin || e.sender !== settingsWin.webContents) return { ok: false, error: 'Not allowed' };
   try {
-    await voice.load({ allowDownload: true, onProgress: (p) => settingsWin?.webContents.send('voice:progress', p) });
+    modelHost.onProgress.voice = (p) => settingsWin?.webContents.send('voice:progress', p);
+    await modelHost.call('voice.load', { allowDownload: true });
     return { ok: true };
   } catch (err) {
     return {
@@ -293,7 +358,12 @@ ipcMain.handle('voice:download', async (e) => {
 ipcMain.handle('voice:speak', async (e, text) => {
   if (!orbWin || e.sender !== orbWin.webContents || !voice.downloaded()) return null;
   try {
-    return await voice.speak(text, loadConfig().alertVoice);
+    const t0 = Date.now();
+    const out = await modelHost.call('voice.speak', text, loadConfig().alertVoice);
+    console.log(
+      `[${new Date().toISOString().slice(11, 23)}] voice: ${String(text).length} chars synthesized in ${Date.now() - t0} ms`,
+    );
+    return out;
   } catch (err) {
     console.error('voice', err);
     return null; // the robot page falls back to the Windows voice
@@ -301,12 +371,13 @@ ipcMain.handle('voice:speak', async (e, text) => {
 });
 
 // Wake word (wake.js): the model is downloaded from Settings only; clips come from the robot window.
-const wake = createWake({ cacheDir: path.join(app.getPath('userData'), 'models') });
+const wake = createWake({ cacheDir: modelsDir });
 ipcMain.handle('wake:status', () => ({ downloaded: wake.downloaded() }));
 ipcMain.handle('wake:download', async (e) => {
   if (!settingsWin || e.sender !== settingsWin.webContents) return { ok: false, error: 'Not allowed' };
   try {
-    await wake.load({ allowDownload: true, onProgress: (p) => settingsWin?.webContents.send('wake:progress', p) });
+    modelHost.onProgress.wake = (p) => settingsWin?.webContents.send('wake:progress', p);
+    await modelHost.call('wake.load', { allowDownload: true });
     return { ok: true };
   } catch (err) {
     return {
@@ -320,12 +391,88 @@ ipcMain.handle('wake:download', async (e) => {
 ipcMain.handle('wake:hear', async (e, pcm) => {
   if (!orbWin || e.sender !== orbWin.webContents || !wake.downloaded()) return '';
   if (!(pcm instanceof Float32Array) || pcm.length > 16000 * 3) return '';
+  const t0 = Date.now();
   try {
-    return await wake.hear(pcm);
+    const heard = await modelHost.call('wake.hear', pcm);
+    console.log(`wake: ${(pcm.length / 16000).toFixed(1)} s clip -> "${heard}" (${Date.now() - t0} ms)`);
+    return heard;
   } catch (err) {
     console.error('wake', err);
     return '';
   }
+});
+// Load the model ahead of the first "Hey Orbit" (a few seconds), so that one isn't missed.
+app.whenReady().then(() => {
+  const { activation } = loadConfig();
+  if ((activation === 'wake' || activation === 'both') && wake.downloaded())
+    modelHost.call('wake.load').catch((e) => console.error('wake', e));
+});
+
+// The overlay: a click-through window over the robot's display draws the ambush beam from its core to
+// your pointer, or the teleport streak (renderer/laser.*); shown for one shot, hidden again right after.
+let laserWin = null;
+let laserHide = null;
+function showLaser({ x0, y0, x1, y1, kind = 'laser', form = 'orb', secs = 1.5 }) {
+  const { bounds } = screen.getDisplayNearestPoint({ x: Math.round(x0), y: Math.round(y0) });
+  if (!laserWin || laserWin.isDestroyed()) {
+    laserWin = new BrowserWindow({
+      ...bounds,
+      show: false,
+      frame: false,
+      transparent: true,
+      backgroundColor: '#00000000',
+      resizable: false,
+      movable: false,
+      alwaysOnTop: true,
+      hasShadow: false,
+      skipTaskbar: true,
+      focusable: false,
+      webPreferences: { preload: path.join(__dirname, 'preload.js'), contextIsolation: true, nodeIntegration: false },
+    });
+    laserWin.setIgnoreMouseEvents(true);
+    laserWin.setAlwaysOnTop(true, 'screen-saver');
+    laserWin.loadFile(path.join(__dirname, 'renderer', 'laser.html'));
+  }
+  laserWin.setBounds(bounds);
+  const send = () =>
+    laserWin.webContents.send('ambush', {
+      kind,
+      form,
+      secs,
+      x0: x0 - bounds.x,
+      y0: y0 - bounds.y,
+      x1: x1 - bounds.x,
+      y1: y1 - bounds.y,
+    });
+  if (laserWin.webContents.isLoading()) laserWin.webContents.once('did-finish-load', send);
+  else send();
+  laserWin.showInactive();
+  clearTimeout(laserHide);
+  laserHide = setTimeout(() => laserWin?.hide(), secs * 1000 + 400);
+}
+
+// Dictation: Gemini's type_text tool pastes clean English into whatever text box has the focus
+// (Settings: dictation). The clipboard is used for the paste and put back as it was.
+ipcMain.handle('type:text', async (e, text) => {
+  if (!orbWin || e.sender !== orbWin.webContents) return { ok: false, error: 'Not allowed' };
+  if (loadConfig().dictation === false) return { ok: false, error: 'Dictation is off in Settings' };
+  const line = String(text ?? '').slice(0, 2000);
+  if (!line.trim()) return { ok: false, error: 'Nothing to type' };
+  const before = clipboard.readText();
+  clipboard.writeText(line);
+  const ps = "Add-Type -AssemblyName System.Windows.Forms; [System.Windows.Forms.SendKeys]::SendWait('^v')";
+  await new Promise((resolve) => {
+    const p = spawn('powershell.exe', ['-NoProfile', '-NonInteractive', '-Command', ps], {
+      windowsHide: true,
+      stdio: 'ignore',
+    });
+    p.on('exit', resolve);
+    p.on('error', resolve);
+  });
+  setTimeout(() => {
+    if (clipboard.readText() === line) clipboard.writeText(before);
+  }, 700);
+  return { ok: true, typed: line.length };
 });
 
 // Subtitle bubble beside the robot for what the alert voice says (renderer/bubble.*): never
@@ -395,6 +542,9 @@ function hideBubble() {
   }, 400);
 }
 ipcMain.on('bubble:show', (e, b) => {
+  console.log(
+    `[${new Date().toISOString().slice(11, 23)}] bubble ${b?.kind ?? ''} ${String(b?.text ?? '').length} chars`,
+  );
   if (orbWin && e.sender === orbWin.webContents && b && typeof b.text === 'string') showBubble(b);
 });
 ipcMain.on('bubble:hide', (e) => {
@@ -562,6 +712,13 @@ function setSkin(name) {
   orbWin?.webContents.send('orb:skin', name);
 }
 ipcMain.on('orb:setSkin', (_e, name) => setSkin(name));
+// Character changes go the same way: saved, then sent straight to the robot, which swaps bodies live.
+function setCharacter(name) {
+  if (!CHARACTER_LABELS[name]) return;
+  saveConfig({ character: name });
+  orbWin?.webContents.send('orb:character', name);
+}
+ipcMain.on('orb:setCharacter', (_e, name) => setCharacter(name));
 
 // ---------- AI agent watcher (Claude Code, Codex, Copilot, OpenCode, Antigravity, Hermes) ----------
 // Agents send their hook events to a listener on 127.0.0.1: Claude Code directly (http hooks),
@@ -702,6 +859,9 @@ function stopClaudeServer() {
 }
 
 function onClaudeEvent(evt) {
+  console.log(
+    `[${new Date().toISOString().slice(11, 23)}] hook event ${evt.agent ?? 'claude'} ${evt.hook_event_name ?? ''}`,
+  );
   const r = watch.add(evt);
   if (!r || !orbWin) return;
   if (brain) {
@@ -1073,6 +1233,15 @@ ipcMain.on('menu:show', () => {
         type: 'radio',
         checked: loadConfig().skin === name,
         click: () => setSkin(name),
+      })),
+    },
+    {
+      label: 'Character',
+      submenu: Object.entries(CHARACTER_LABELS).map(([name, label]) => ({
+        label,
+        type: 'radio',
+        checked: (loadConfig().character ?? 'og') === name,
+        click: () => setCharacter(name),
       })),
     },
     {

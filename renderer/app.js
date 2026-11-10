@@ -1,10 +1,11 @@
 import { Robot, SKIN_NAMES } from './robot.js';
 import { cardFor, customCard } from './faceCard.js';
 import { Segmenter, isWake, toFloat } from './wakeword.js';
+import { speechChunks } from './speech.js';
 import { Mic, Player } from './audio.js';
 import { GeminiLive } from './gemini.js';
 import { languageRule } from './languages.js';
-import { playTransform, playDefend } from './sfx.js';
+import { playTransform, playDefend, playTeleport } from './sfx.js';
 import { DEFENCES, DEFENCE_SECS } from './defend.js';
 
 const canvas = document.getElementById('orb');
@@ -100,6 +101,19 @@ const TOOLS = [
         },
       },
       {
+        name: 'type_text',
+        description:
+          'Type text into the text box the user has focused on their screen, when they ask you to type, write, ' +
+          'dictate, fix the grammar of, or summarize what they said ("type this: ...", "fix my grammar and type it", ' +
+          '"summarize what I said and put it in the box"). Pass clean, corrected English with the meaning kept ' +
+          '(a summary only when asked). Never passwords or codes.',
+        parameters: {
+          type: 'OBJECT',
+          properties: { text: { type: 'STRING' } },
+          required: ['text'],
+        },
+      },
+      {
         name: 'show_on_face',
         description:
           'Show text, an emoji or both on your face screen for a few seconds, when the user asks ' +
@@ -158,7 +172,7 @@ const TOOLS = [
 ];
 
 const ACTION_RULE =
-  'PC ACTIONS: You can open apps (open_app) and websites (open_website), do flying tricks (do_trick), transform into AeroStrike (transform), switch defence mode (defence_mode), show text or emoji on your face (show_on_face), strike a taunting pose (taunt) and ' +
+  'PC ACTIONS: You can open apps (open_app) and websites (open_website), do flying tricks (do_trick), transform into AeroStrike (transform), switch defence mode (defence_mode), show text or emoji on your face (show_on_face), strike a taunting pose (taunt), type dictated text into the focused text box (type_text: fix the grammar, keep the meaning, no confirmation needed) and ' +
   'change your skin (change_skin). ' +
   'Only say something was opened after the tool returns ok:true; if it fails, say so. ' +
   'If the result has a "note", tell the user that note briefly. ' +
@@ -280,16 +294,26 @@ async function sayLocally(alert) {
     const caption = String(alert.caption || '');
     return bubble(alert, caption, Math.min(5, wordSecs(caption)));
   }
-  const natural = await window.orbit.speak(text).catch(() => null);
-  if (state !== 'idle') return void claudeQueue.unshift(alert); // you started talking meanwhile: later
-  if (natural?.pcm?.length) {
+  bubble(alert, text, wordSecs(text)); // on screen at once; the voice follows when it's synthesized
+  // the natural voice is slow to make (about 2x real time on a laptop CPU), so it goes sentence by
+  // sentence: the first short one plays while the next is being synthesized
+  const parts = speechChunks(text);
+  let next = window.orbit.speak(parts[0]).catch(() => null);
+  let spoke = false;
+  for (let i = 0; i < parts.length; i++) {
+    const natural = await next;
+    if (state !== 'idle') return void (spoke || claudeQueue.unshift(alert)); // you started talking: later
+    if (!natural?.pcm?.length) break; // no natural voice: the Windows voice says the rest
+    next = parts[i + 1] ? window.orbit.speak(parts[i + 1]).catch(() => null) : null;
     const pcm = Int16Array.from(natural.pcm, (v) => Math.max(-1, Math.min(1, v)) * 32767);
-    alertPlayer.play(pcm);
-    bubble(alert, text, natural.secs);
-    return pause(natural.secs + 0.3);
+    alertPlayer.play(pcm); // queues after what's still playing
+    if (!spoke) bubble(alert, text, wordSecs(text) + natural.secs); // re-timed: it started later than planned
+    spoke = true;
+    if (!next) return pause(natural.secs + 0.3);
+    await pause(natural.secs * 0.6); // keep a little audio queued, then wait for the next sentence
   }
+  if (spoke) return;
   const voice = localVoice();
-  bubble(alert, text, wordSecs(text));
   if (!voice) return pause(wordSecs(text)); // no offline Windows voice installed: the bubble is enough
   const u = new SpeechSynthesisUtterance(text);
   u.voice = voice;
@@ -329,6 +353,7 @@ window.orbit.onClaudeEvent((r) => {
 const wakeMic = new Mic();
 let wakeOn = false;
 let wakeBusy = false;
+let wakePending = null; // the newest clip heard while the model was busy, checked next
 let wakeReady = false;
 let segmenter = null;
 window.orbit
@@ -346,14 +371,19 @@ async function syncWake() {
   segmenter = new Segmenter();
   try {
     await wakeMic.start(async (buf) => {
+      if (speakingAlerts) return; // Orbit's own alert voice can't wake it
       const clip = segmenter?.feed(new Int16Array(buf));
-      if (!clip || wakeBusy || !wakeOn) return;
+      if (!clip || !wakeOn) return;
+      if (wakeBusy) return void (wakePending = clip); // checked right after the current one
       wakeBusy = true;
       try {
-        const heard = await window.orbit.wakeHear(toFloat(clip));
-        if (wakeOn && state === 'idle' && isWake(heard)) {
-          orb.bounce();
-          startListening();
+        for (let c = clip; c && wakeOn; c = wakePending, wakePending = null) {
+          const heard = await window.orbit.wakeHear(toFloat(c));
+          if (wakeOn && state === 'idle' && isWake(heard)) {
+            wakePending = null;
+            orb.bounce();
+            startListening();
+          }
         }
       } finally {
         wakeBusy = false;
@@ -446,7 +476,9 @@ async function ensureLive() {
     onToolCall: async (calls) => {
       turnDone = false;
       const tricksOnly = calls.every((fc) =>
-        ['do_trick', 'change_skin', 'transform', 'defence_mode', 'show_on_face', 'taunt'].includes(fc.name),
+        ['do_trick', 'change_skin', 'transform', 'defence_mode', 'show_on_face', 'taunt', 'type_text'].includes(
+          fc.name,
+        ),
       );
       const label = calls.every((fc) => fc.name === 'agent_status')
         ? 'Checking agents…'
@@ -466,6 +498,11 @@ async function ensureLive() {
           const form = fc.args?.form === 'orbit' ? 'orb' : 'mech';
           window.orbit.transform(form);
           result = { ok: true, form: form === 'mech' ? 'AeroStrike' : 'Orbit' };
+        } else if (fc.name === 'type_text') {
+          result =
+            cfg.dictation === false
+              ? { ok: false, error: 'Dictation is off in Settings' }
+              : await window.orbit.typeText(fc.args?.text);
         } else if (fc.name === 'show_on_face') {
           const card = customCard(fc.args || {});
           const secs = Math.max(2, Math.min(30, Number(fc.args?.seconds) || 6));
@@ -634,6 +671,11 @@ async function toggle() {
 let press = null;
 let guarding = false; // from the brain's motion updates
 
+// the ambush (brain + overlay): the robot braces and charges its core toward your pointer
+window.orbit.onAmbush(({ nx, ny }) => {
+  if (orb.defend('laser', nx, ny, true)) playDefend(player.ctx, 'laser', DEFENCE_SECS.laser);
+});
+
 canvas.addEventListener('pointerdown', (e) => {
   if (e.button !== 0) return;
   if (guarding) {
@@ -681,6 +723,7 @@ window.orbit.onMotion((m) => {
   if (m.event !== lastEvent && (m.event === 'morph:up' || m.event === 'morph:down')) {
     playTransform(player.ctx, m.event === 'morph:up');
   }
+  if (m.event !== lastEvent && m.event === 'teleport:out') playTeleport(player.ctx, m.form > 0.5 ? 'mech' : 'orb');
   lastEvent = m.event;
   guarding = !!m.defence && m.form > 0.9;
   mood = m.mood || 'calm';
@@ -713,12 +756,18 @@ window.orbit.onSkin((skin) => {
   cfg.skin = skin;
   orb.setSkin(skin);
 });
+orb.setCharacter(cfg.character);
+window.orbit.onCharacter((character) => {
+  cfg.character = character;
+  orb.setCharacter(character);
+});
 
 window.orbit.onConfigChanged(async () => {
   cfg = await window.orbit.getConfig();
   player.setOutput(cfg.speakerLabel);
   alertPlayer.setOutput(cfg.speakerLabel);
   orb.setSkin(cfg.skin);
+  orb.setCharacter(cfg.character);
   live?.close();
   live = null;
   // the wake word may have been switched, downloaded or given another mic: start it afresh

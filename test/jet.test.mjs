@@ -61,3 +61,11 @@ test('when the window flies, exhaust stays behind on the desktop', () => {
   step(ex, 0.2, { throttle: 0, buoyancy: 0, shift: [-0.05, 0, 0] }); // window moving right
   assert.ok(ex.pos[0] < x0 - 0.5);
 });
+
+test('demand flares speeding up and turning, eases off braking, unchanged at 0', () => {
+  const base = thrustDemand({ speed: 300 });
+  assert.strictEqual(thrustDemand({ speed: 300, accel: 0, turn: 0 }), base);
+  assert.ok(thrustDemand({ speed: 300, accel: 1500 }) > base);
+  assert.ok(thrustDemand({ speed: 300, turn: 3 }) > base);
+  assert.ok(thrustDemand({ speed: 300, accel: -1500 }) < base);
+});

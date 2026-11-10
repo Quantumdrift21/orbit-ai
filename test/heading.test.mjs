@@ -47,3 +47,37 @@ test('perspective: smaller far away, a bit bigger close up', () => {
   assert.ok(depthScale(1.85) < 0.36 && depthScale(-0.17) > 1.19);
   assert.strictEqual(depthScale(99), depthScale(1.85)); // clamped
 });
+
+test('inertia: pitches forward speeding up, back braking; roll overshoots then settles; clamps hold', () => {
+  const step = (s, v, n) => {
+    for (let i = 0; i < n; i++) s = attitude(s, v, 1 / 60);
+    return s;
+  };
+  let s = step(rest, { vx: 0 }, 5);
+  let peak = 0;
+  for (let i = 0; i < 20; i++) {
+    s = attitude(s, { vx: 30 * i }, 1 / 60); // speeding up
+    peak = Math.max(peak, s.pitch);
+  }
+  assert.ok(peak > 0.05 && s.accel > 0);
+  let low = 0;
+  for (let i = 20; i >= 0; i--) {
+    s = attitude(s, { vx: 30 * i }, 1 / 60); // braking
+    low = Math.min(low, s.pitch);
+  }
+  assert.ok(low < -0.03);
+  // roll after a turn: crosses past level, then settles
+  let r = fly(rest, { vx: 400 }, 1);
+  r = { ...fly(r, { vx: -400 }, 0.3) };
+  const sign = Math.sign(r.roll);
+  let crossed = false;
+  for (let i = 0; i < 300; i++) {
+    r = attitude(r, { vx: -400 }, 1 / 60);
+    if (Math.sign(r.roll) === -sign && Math.abs(r.roll) > 1e-3) crossed = true;
+    assert.ok(Math.abs(r.roll) <= 0.75 && Math.abs(r.pitch) <= 0.9);
+  }
+  assert.ok(crossed && Math.abs(r.roll) < 0.02);
+  // a frame-time spike stays bounded
+  const spike = attitude(step(rest, { vx: 500 }, 60), { vx: -500, vy: 900 }, 2);
+  assert.ok(Number.isFinite(spike.pitch) && Math.abs(spike.roll) <= 0.75);
+});

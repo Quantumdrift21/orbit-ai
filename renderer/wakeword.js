@@ -8,6 +8,7 @@ const PRE = 3; // keep 300 ms before the speech starts
 const HANG = 4; // 400 ms of quiet ends a clip
 const MAX = 25; // clips are at most 2.5 s ("Hey Orbit" takes about one)
 const MIN = 3; // ...and at least 300 ms of speech
+const PEAK = 0.03; // the loudest 100 ms must reach this: a voice near the mic, not a fan or a keyboard
 
 const level = (pcm) => {
   let sum = 0;
@@ -24,12 +25,13 @@ export class Segmenter {
     this.quiet = 0;
     this.speech = 0;
     this.skip = false; // in the middle of long talk: wait for a pause before listening again
+    this.levels = [];
   }
 
   /** Feed one chunk; returns a finished clip (Int16Array) or null. */
   feed(pcm) {
     const v = level(pcm);
-    const loud = v > Math.max(0.012, this.floor * 3);
+    const loud = v > Math.max(0.015, this.floor * 4);
     if (!loud) this.floor += (Math.min(v, 0.05) - this.floor) * 0.05;
     if (this.skip) {
       this.quiet = loud ? 0 : this.quiet + 1;
@@ -44,17 +46,24 @@ export class Segmenter {
         this.pre = [];
         this.quiet = 0;
         this.speech = 1;
+        this.levels = [v];
       }
       return null;
     }
     this.clip.push(pcm);
+    this.levels.push(v);
     if (loud) {
       this.speech++;
       this.quiet = 0;
     } else this.quiet++;
     if (this.quiet < HANG && this.clip.length < MAX) return null;
     const parts = this.clip;
-    const enough = this.speech >= MIN && this.clip.length < MAX; // too long: talking, not a wake word
+    // speech is loud and bursty: the peak well above the floor and clearly above the clip's average;
+    // steady noise (a fan, traffic) is neither, and never reaches the model
+    const peak = Math.max(...this.levels);
+    const mean = this.levels.reduce((a, b) => a + b, 0) / this.levels.length;
+    const voice = peak >= PEAK && peak > 1.4 * mean;
+    const enough = voice && this.speech >= MIN && this.clip.length < MAX; // too long: talking, not a wake word
     this.skip = this.clip.length >= MAX;
     this.quiet = 0;
     this.clip = null;

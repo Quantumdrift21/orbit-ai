@@ -3,6 +3,7 @@
 // (~40 MB) is downloaded once, only when you click Download in Settings; after that nothing goes online.
 // The robot page cuts your speech into short clips (renderer/wakeword.js) and only those are transcribed.
 const fs = require('fs');
+const os = require('os');
 const path = require('path');
 
 const MODEL = 'onnx-community/whisper-tiny.en';
@@ -29,6 +30,7 @@ function createWake({ cacheDir }) {
       asr = await pipeline('automatic-speech-recognition', MODEL, {
         dtype: 'q8',
         device: 'cpu',
+        session_options: { intraOpNumThreads: Math.min(8, os.cpus().length) },
         progress_callback: (p) => {
           if (p.status === 'progress' && p.file?.endsWith('.onnx')) onProgress(Math.round(p.progress));
         },
