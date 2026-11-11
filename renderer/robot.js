@@ -34,6 +34,8 @@ const MOOD_TINT = { happy: '#ffd66b', excited: '#ff5cf0', bored: '#7f9bb3', slee
 const MOOD_BOB = { happy: 1.4, excited: 2, bored: 0.6, sleepy: 0.5, grumpy: 1.6 };
 
 const DEFENCE_RED = new THREE.Color('#ff2414');
+const GLOW = new THREE.Color(); // per-frame scratch colours (no garbage while animating)
+const TINT = new THREE.Color();
 
 const TAU = Math.PI * 2;
 const lerp = (a, b, t) => a + (b - a) * t;
@@ -525,6 +527,7 @@ export class Robot {
         color: 0x111111,
         emissive: this.accent.clone(),
         emissiveIntensity: intensity,
+        toneMapped: false, // neon reads as neon without bloom (shader flag, no cost)
       });
       m.userData.base = intensity;
       this.glowMats.push(m);
@@ -663,7 +666,8 @@ export class Robot {
         clearcoatRoughness: 0.04,
         emissive: 0xffffff,
         emissiveMap: this.faceTex,
-        emissiveIntensity: 1.7,
+        emissiveIntensity: 1.15,
+        toneMapped: false, // a lit screen: keep its colours vivid instead of filmic-greyed
       }),
     );
     this.head.add(screen);
@@ -937,10 +941,20 @@ export class Robot {
     g.fillStyle = '#000';
     g.fillRect(0, 0, W, H);
     // faint scanlines make it read as a screen
-    g.globalAlpha = 0.06;
-    g.fillStyle = c;
-    for (let y = 0; y < H; y += 6) g.fillRect(0, y, W, 2);
-    g.globalAlpha = 1;
+    if (this.scanHex !== c) {
+      // one tiny tile, rebuilt only when the colour changes: one fill instead of ~60 per frame
+      const tile = document.createElement('canvas');
+      tile.width = 1;
+      tile.height = 6;
+      const tg = tile.getContext('2d');
+      tg.globalAlpha = 0.06;
+      tg.fillStyle = c;
+      tg.fillRect(0, 0, 1, 2);
+      this.scan = g.createPattern(tile, 'repeat');
+      this.scanHex = c;
+    }
+    g.fillStyle = this.scan;
+    g.fillRect(0, 0, W, H);
 
     g.shadowColor = c;
     g.shadowBlur = 13; // in canvas pixels (not scaled by the transform)
@@ -1218,10 +1232,9 @@ export class Robot {
     // Crazy skin: the rainbow slides round the body and the idle glow cycles through colours.
     const crazy = this.skin === 'crazy';
     if (crazy) this.shell.map.offset.x = (t * 0.015) % 1;
-    const glow = new THREE.Color(STATE_COLORS[st]);
+    const glow = GLOW.set(STATE_COLORS[st]);
     if (crazy && st === 'idle') glow.setHSL((t * 0.06) % 1, 0.95, 0.62);
-    else if (st === 'idle' && MOOD_TINT[this.motion.mood])
-      glow.lerp(new THREE.Color(MOOD_TINT[this.motion.mood]), 0.45);
+    else if (st === 'idle' && MOOD_TINT[this.motion.mood]) glow.lerp(TINT.set(MOOD_TINT[this.motion.mood]), 0.45);
     this.baseAccent ??= this.accent.clone();
     this.baseAccent.lerp(glow, 0.07);
     // on guard the glow runs a little hot; charging the laser turns it fully red
@@ -1537,7 +1550,12 @@ export class Robot {
     }
     if (t < this.blink.until) open = 0.08;
 
-    if (!flowOn) this.#drawFace(open); // Flow has a real face (its expressions are still to come)
+    // Flow has a real face (its expressions are still to come). The screen redraws at most ~30 Hz: half the
+    // canvas work and texture uploads while the body renders at 60, and nobody sees the difference.
+    if (!flowOn && (t - (this.faceAt ?? -1) >= 1 / 32 || open < 1)) {
+      this.faceAt = t;
+      this.#drawFace(open);
+    }
     if (def || this.laser.visible || this.laser.userData.muzzle.visible) {
       // the laser needs this frame's core position (render() would only update it afterwards)
       this.scene.updateMatrixWorld();
