@@ -5,7 +5,6 @@ import assert from 'node:assert';
 import { stance, taunt, sleep, zero, blend, weightAt, TAUNTS } from '../renderer/postures.js';
 import { cardFor, customCard } from '../renderer/faceCard.js';
 import { superheroLoop } from '../renderer/flip.js';
-import { fxLevels } from '../renderer/morphFx.js';
 
 const joints = (P) => [
   ...P.arms.flatMap((a) => [a.x, a.z, a.fore, a.foreZ]),
@@ -75,11 +74,4 @@ test('the loop: the lead arm reaches before the other, the back arches mid-loop,
     const e = superheroLoop(p);
     assert.ok(e.stretch === 0 && e.lead === 0 && e.follow === 0 && Math.abs(e.bank) < 1e-9);
   }
-});
-
-test('transformation effects: off when not transforming, the cocoon covers the first unfolding', () => {
-  for (const f of [0, 1]) assert.ok(Object.values(fxLevels(f)).every((v) => v === 0));
-  assert.ok(fxLevels(0.04).flash > 0.9); // the burst comes first
-  assert.ok(fxLevels(0.2).cocoon > 0.95); // fully round the body while the parts first pop out
-  assert.ok(fxLevels(0.7).cocoon < 0.1 && fxLevels(0.7).scanY < fxLevels(0.3).scanY); // gone; scan moves down
 });

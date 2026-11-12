@@ -3,7 +3,12 @@ import test from 'node:test';
 import assert from 'node:assert';
 import { Segmenter, isWake, CHUNK } from '../renderer/wakeword.js';
 
-const tone = (amp) => Int16Array.from({ length: CHUNK }, (_, i) => Math.round(amp * 32767 * Math.sin(i / 3)));
+// a 100 ms chunk at about `amp`; speech-like chunks vary in loudness from one to the next
+let k = 0;
+const tone = (amp) => {
+  const a = amp * (amp > 0.05 ? 0.6 + (0.8 * ((k++ * 7) % 5)) / 4 : 1);
+  return Int16Array.from({ length: CHUNK }, (_, i) => Math.round(a * 32767 * Math.sin(i / 3)));
+};
 const run = (seg, pattern) => pattern.flatMap(([amp, n]) => Array.from({ length: n }, () => seg.feed(tone(amp))));
 
 test('a short burst of speech after quiet becomes one clip, with a little lead-in', () => {
@@ -17,8 +22,16 @@ test('a short burst of speech after quiet becomes one clip, with a little lead-i
   assert.ok(out[0].length >= CHUNK * (8 + 3) && out[0].length <= CHUNK * (3 + 8 + 4));
 });
 
-test('silence, a click and long talking make no clip', () => {
+test('silence, a click, steady noise and long talking make no clip', () => {
   const seg = new Segmenter();
+  k = 0;
+  assert.strictEqual(
+    run(seg, [
+      [0.03, 30],
+      [0.002, 10],
+    ]).filter(Boolean).length,
+    0,
+  ); // a fan: steady, never bursty
   assert.strictEqual(run(seg, [[0.002, 50]]).filter(Boolean).length, 0);
   assert.strictEqual(
     run(seg, [

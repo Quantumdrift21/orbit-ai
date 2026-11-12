@@ -5,6 +5,8 @@ const moods = require('./mood');
 const { TRANSFORM_SECS, LAYOUTS, moveFor } = require('./form');
 const avoid = require('./avoid');
 const flight = require('./flight');
+const { createAmbush, ambushStep } = require('./ambush');
+const tp = require('./teleport');
 
 const now = () => performance.now() / 1000;
 // Clickable area around the robot's centre (px, half-width / half-height) – body plus arm-orbs.
@@ -54,6 +56,12 @@ class Brain {
     this.formP = 0; // 0..1, sent to the robot page
     this.morph = null; // a transformation in progress
     this.defence = false; // AeroStrike on guard: holds its ground and fends off clicks (robot page)
+    this.ambush = createAmbush(); // ...and, after you back off, fires a long laser at your pointer (ambush.js)
+    this.onAmbush = null; // main.js: show the overlay beam and pose the robot
+    this.tele = null; // a teleport in progress: { from, to, start, secs, reason, jumped, dir } (teleport.js)
+    this.lastEscape = -1e9;
+    this.teleportEnabled = true; // Settings: teleport
+    this.onTeleport = null; // main.js: the streak across the desktop (overlay window)
     this.mechUntil = Infinity; // when a self-started AeroStrike folds back
     this.depth = 0; // AeroStrike only: how far into the screen it has flown (flight.js), and how fast
     this.vz = 0;
@@ -201,6 +209,34 @@ class Brain {
     this.eventUntil = now() + secs;
   }
 
+  /** Free to teleport right now? Never mid-transformation, mid-stunt, dragged, on guard, asleep or busy. */
+  teleportOk() {
+    return (
+      this.teleportEnabled &&
+      !this.morph &&
+      !this.trick &&
+      !this.dragging &&
+      !this.defence &&
+      !this.busy &&
+      this.mode !== 'sleep' &&
+      this.mode !== 'toBed' &&
+      this.mode !== 'teleport'
+    );
+  }
+
+  /** Blink to `to` (screen px): the body effect runs over TELEPORT_SECS, the window jumps halfway. */
+  teleport(to, reason) {
+    const from = this.center();
+    const len = Math.hypot(to.x - from.x, to.y - from.y) || 1;
+    const secs = tp.TELEPORT_SECS[this.form];
+    const dir = { x: +((to.x - from.x) / len).toFixed(3), y: +((to.y - from.y) / len).toFixed(3) };
+    this.tele = { from, to, start: now(), secs, reason, jumped: false, dir };
+    this.mode = 'teleport';
+    this.flash('teleport:out', 0.5); // the robot page plays the sound
+    this.feel('trick');
+    this.onTeleport?.({ x0: from.x, y0: from.y, x1: to.x, y1: to.y, form: this.form, secs });
+  }
+
   decide(rhythm) {
     const wa = this.workArea();
     if (Math.random() < rhythm.journey) {
@@ -218,6 +254,10 @@ class Brain {
         }
         this.target = { x: tx, y: ty };
       }
+      // now and then a long journey is a teleport instead (teleport.js)
+      const far = Math.hypot(this.target.x - c.x, this.target.y - c.y);
+      if (this.teleportOk() && far >= tp.MIN_JUMP && Math.random() < tp.SHARE)
+        return this.teleport(this.target, 'roam');
       this.speed = rhythm.speed * rand(0.75, 1.25) * moods.EFFECTS[this.mood].speed;
       this.mode = 'journey';
       // AeroStrike also flies into the screen and back out (flight.js)
@@ -372,6 +412,28 @@ class Brain {
           }
           break;
         }
+        case 'teleport': {
+          // hold still while the body leaves; jump the window halfway; rest once it has arrived
+          const te = this.tele;
+          const p = (t - te.start) / te.secs;
+          desired = { x: 0, y: 0 };
+          steer = 12;
+          if (p >= tp.JUMP && !te.jumped) {
+            te.jumped = true;
+            this.pos = { x: te.to.x - this.anchor.x, y: te.to.y - this.anchor.y };
+            this.vel = { x: 0, y: 0 };
+            this.win.setPosition(Math.round(this.pos.x), Math.round(this.pos.y));
+            this.over = false;
+            this.win.setIgnoreMouseEvents(true, { forward: true });
+            this.flash('teleport:in', 0.5);
+          }
+          if (p >= 1) {
+            this.tele = null;
+            this.mode = 'rest';
+            this.until = t + rand(...rhythm.rest);
+          }
+          break;
+        }
         case 'sleep':
           desired = { x: 0, y: Math.sin(t * 0.5) * 3 };
           if (t > this.until && daypart() !== 'night') {
@@ -387,7 +449,8 @@ class Brain {
       this.stillOn = avoid.catchTime(this.stillOn, { over: this.over, pointerSpeed: this.cursorSpeed, dt });
       const caught = avoid.isCaught(this.stillOn) || (dist < 100 && this.cursorSpeed < 150);
       const flying = this.mode === 'journey' || this.mode === 'toBed';
-      if (!guard && this.mode !== 'sleep' && !caught && (flying || this.cursorSpeed > 150)) {
+      const teleporting = this.mode === 'teleport';
+      if (!guard && !teleporting && this.mode !== 'sleep' && !caught && (flying || this.cursorSpeed > 150)) {
         const away = avoid.pointerRepel(c, m);
         if (away) {
           const push = flying ? 520 : 300;
@@ -396,8 +459,22 @@ class Brain {
           steer = Math.max(steer, 4);
         }
       }
-      if (!guard && this.mode !== 'sleep' && dist < 160) {
-        if (this.cursorSpeed > 650) {
+      if (!guard && !teleporting && this.mode !== 'sleep' && dist < 160) {
+        const escape = tp.shouldEscape({
+          speed: this.cursorSpeed,
+          dist,
+          t,
+          lastEscape: this.lastEscape,
+          caught,
+          guard,
+          mode: this.mode,
+          dragging: this.dragging,
+        });
+        if (escape && this.teleportOk()) {
+          // a very fast swipe: sometimes it blinks away to the far side instead of dodging
+          this.lastEscape = t;
+          this.teleport(tp.escapeSpot(this.workArea(), c, m), 'escape');
+        } else if (this.cursorSpeed > 650) {
           const f = (160 - dist) / 160;
           desired.x += (dx / dist) * 1100 * f;
           desired.y += (dy / dist) * 1100 * f;
@@ -415,7 +492,7 @@ class Brain {
       // While you type it never sits or flies in front of the text (asleep too: it drifts aside).
       const hb = this.hit();
       const body = { x: this.pos.x + hb.x, y: this.pos.y + hb.y }; // the clickable ellipse
-      const out = guard ? null : avoid.pushOut(body, this.radii(), this.typingZone);
+      const out = guard || teleporting ? null : avoid.pushOut(body, this.radii(), this.typingZone);
       if (out) {
         const d = Math.hypot(out.x, out.y) || 1;
         const sp = Math.min(600, 160 + d * 3);
@@ -452,6 +529,14 @@ class Brain {
       if (nx !== wx || ny !== wy) this.win.setBounds({ x: nx, y: ny, ...this.size });
     }
 
+    // Ambush (defence mode): you came at it and backed off; after a quiet moment it fires across the
+    // screen at your pointer. The overlay window draws the beam from its core (main.js).
+    const guard = this.defence && this.form === 'mech' && !this.morph && !this.dragging;
+    if (ambushStep(this.ambush, { dist, speed: this.cursorSpeed, t, guard, rand })) {
+      const c = this.center();
+      this.onAmbush?.({ x0: c.x, y0: c.y, x1: m.x, y1: m.y });
+    }
+
     // Click-through: only the robot itself catches the mouse. Checked here (not on mousemove in
     // the page) because the window often moves under a cursor that is standing still.
     const nc = this.center();
@@ -478,6 +563,13 @@ class Brain {
       depth: +this.depth.toFixed(3),
       vz: +this.vz.toFixed(3),
       defence: this.defence,
+      tele: this.tele
+        ? {
+            p: +Math.min(1, (t - this.tele.start) / this.tele.secs).toFixed(3),
+            dx: this.tele.dir.x,
+            dy: this.tele.dir.y,
+          }
+        : null,
       hover: over,
       look: { x: +((m.x - nc.x) / 500).toFixed(3), y: +((m.y - nc.y) / 500).toFixed(3) },
     });

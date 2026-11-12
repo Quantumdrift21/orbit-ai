@@ -78,10 +78,15 @@ agent's transcript.
   supports it (see below).
 - **Transforms into AeroStrike**: Orbit unfolds into a winged aerial combat mech, part by part, with servo and
   clank sounds and glowing thrusters (see below).
-  A flash, a shockwave and a glowing energy cocoon wrap it while the parts form, with sparks and a scan line.
+
 - **Moves like a body, not a toy**: when it dodges or turns, every joint swings and settles on its own
   (shoulder, elbow, wrist, hip, knee, wing feathers), it flinches at a sudden swipe, and AeroStrike has human
   hands that rest relaxed, make fists on guard and clench when startled.
+- **Teleports**: now and then it blinks across the screen instead of flying, and a very fast swipe can make it
+  vanish and reappear on the far side. Orbit warps as a light streak; AeroStrike bursts its jets and arrives in a
+  blur (Settings: Teleport now and then).
+- **Dictation**: click any text box, then say "type this: ...", "fix my grammar and type it" or "summarize what I
+  said and type it". Orbit writes clean, corrected English straight into that box (Settings: dictation).
 - **Wake word**: say “Hey Orbit” instead of pressing a key (Settings → Start talking with). It's heard offline on
   your PC; nothing is sent anywhere until Orbit starts listening.
 - **Shows things on its face**: when an agent finishes, errors or needs you, Orbit's face (or AeroStrike's chest
@@ -123,6 +128,8 @@ AeroStrike transforms if needed, stops roaming and takes a fighter's stance, fis
 left-click on it is fended off with a random move, done like a person would: a flinch, then a forearm block, a
 chambered side kick toward the click (leaning back to keep its balance) or a red laser fired from the chest core
 at the cursor, and the impact rocks it back before it settles. Right-click it to turn defence off again.
+Come at it and back off, and it bides its time: a few quiet seconds later a long laser crosses the whole screen
+and hits your mouse pointer where it rests.
 
 The mech is modelled in [Blender](https://www.blender.org/) by a script, so it can be changed and rebuilt:
 
@@ -147,6 +154,15 @@ Orbit animates on its own.
 | Crazy    | Holographic rainbow that slowly slides round the body; idle glow cycles |
 
 Change it from right-click → **Skin**, in Settings, or just ask: "wear your velvet skin".
+
+### Flow (beginning beta)
+
+> [!NOTE]
+> **Flow is a second character in early beta.** It is a chibi genie-scholar that transforms into a mage. It flies,
+> follows the same physics and transforms like Orbit, but its own moves (taunts, flips, defence, teleport) are not
+> done yet, and it may change a lot. Pick it in Settings → **Character**.
+
+The models are built in Blender by `tools/flow.py` (`blender -b -P tools/flow.py`), the same way AeroStrike is.
 
 ## Requirements
 
@@ -314,6 +330,9 @@ OpenClaw) can be added the same way.
 | `avoid.js`, `typing-watch.js`         | Polite flying: stay off the text you type, steer around the pointer  |
 | `browser.js`, `browser-rules.js`      | Browser control (Playwright) and its safety rules                    |
 | `wake.js`, `renderer/wakeword.js`     | Offline wake word “Hey Orbit” (Whisper tiny)                         |
+| `models-host.js`                      | Runs the offline models in their own process so Orbit never freezes  |
+| `ambush.js`, `renderer/laser.*`       | Defence-mode ambush: a long laser across the screen at your pointer  |
+| `teleport.js`, `renderer/warp.js`     | Teleporting: when and where (brain), the body effect (robot)         |
 | `voice.js`, `renderer/bubble.*`       | Natural offline alert voice (Kokoro) and the subtitle bubble         |
 | `renderer/jet.js`, `jetPhysics.js`    | Jet flames and exhaust, and their physics                            |
 | `renderer/mech.js`, `sfx.js`          | The AeroStrike mech, its transformation and sounds                   |

@@ -196,6 +196,12 @@
       <option value="crazy">Crazy – holographic rainbow</option>
     </select>
 
+    <label for="character">Character</label>
+    <select id="character">
+      <option value="og">OG – Orbit, transforms into AeroStrike</option>
+      <option value="flow">Flow – genie scholar, transforms into a mage (skins don't apply)</option>
+    </select>
+
     <label for="language">Main language</label>
     <select id="language">
       <option value="auto">Auto – follow the conversation</option>
@@ -206,10 +212,22 @@
     </select>
     <div class="hint" id="languageHint"></div>
 
+    <label class="check"><input id="teleport" type="checkbox" /> Teleport now and then</label>
+    <div class="hint">
+      Sometimes Orbit blinks across the screen instead of flying, and a very fast swipe may make it vanish and reappear
+      on the far side. Orbit warps as a light streak; AeroStrike bursts its jets and arrives in a blur.
+    </div>
+
     <label class="check"><input id="detectApps" type="checkbox" /> Open installed apps by voice</label>
     <div class="hint">
       Finds the apps in your Start menu, so you can say “open Blender”. The list stays on this PC.
       <span id="appsInfo"></span> <a href="#" id="rescan">Rescan</a>
+    </div>
+
+    <label class="check"><input id="dictation" type="checkbox" /> Type what you dictate into your apps</label>
+    <div class="hint">
+      Click the text box you want filled, then say "type this: ...", "fix my grammar and type it" or "summarize what I
+      said and type it". Orbit writes clean English straight into that box. It never types passwords.
     </div>
 
     <label class="check"><input id="browserControl" type="checkbox" /> Let Orbit control a browser</label>

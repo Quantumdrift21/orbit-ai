@@ -14,6 +14,24 @@ const lerp = (a, b, t) => a + (b - a) * t;
 const easeOutBack = (t) => 1 + 2.2 * (t - 1) ** 3 + 1.2 * (t - 1) ** 2;
 // Legs are drawn 1.35x the size they're modelled at, so they're in proportion to the big upper body.
 const LEG_SCALE = 1.35;
+// The transformation in steps (progress 0..1 over form.js TRANSFORM_SECS). robot.js does the wind-up (0..0.1:
+// arm-orbs and antennas fold away, a dip and a hop) and the jet ignition; the parts lock in this order, then the
+// final power pose. sfx.js LOCKS clank at the ends of these.
+const STEPS = {
+  // 0..0.26 is the shell opening in robot.js: boot click and vents, panels release, seams orbit and vent,
+  // layered unfolding into rings and struts; then the mech locks together step by step
+  core: [0.26, 0.36], // bezel, spine, chest plates, collar (the opened shell folds into them)
+  spine: [0.34, 0.46], // ribs and pelvis
+  legs: [0.4, 0.52],
+  arms: [0.5, 0.62],
+  shoulders: [0.58, 0.68],
+  head: [0.66, 0.78],
+  pack: [0.74, 0.84], // then the jets ignite (robot.js, 0.8..0.92)
+  wings: [0.82, 0.92],
+  feathers: [0.9, 0.98],
+  blade: [0.94, 1.0],
+  pose: [0.92, 1.0], // arms thrown wide, chin up, one wing beat, then settle
+};
 // wing feathers: [length, width, fan-out angle]; tools/aerostrike.py models the same six (<wing>F0..F5)
 const FEATHERS = [
   [2.6, 0.44, -0.3],
@@ -79,9 +97,24 @@ function blade(len, width, thick) {
  */
 export function buildMech(kit) {
   const { shell, trim, glowMat, sprite } = kit;
-  const glass = new THREE.MeshPhysicalMaterial({ color: 0x05070c, roughness: 0.08, clearcoat: 1, metalness: 0.2 });
+  const glass = new THREE.MeshPhysicalMaterial({
+    color: 0x05070c,
+    roughness: 0.08,
+    clearcoat: 1,
+    metalness: 0.2,
+    iridescence: 0.35, // thin-film tint on the visor, like coated glass
+    envMapIntensity: 1.6,
+  });
   // vents, faceplates and gaps between armour (the reference sheet's dark accent, #2B3038)
-  const dark = new THREE.MeshStandardMaterial({ color: 0x1c2027, roughness: 0.55, metalness: 0.6 });
+  // shares the shell's brushed roughness and panel bump (built once at startup), so it isn't flat plastic
+  const dark = new THREE.MeshStandardMaterial({
+    color: 0x1c2027,
+    roughness: 0.55,
+    metalness: 0.6,
+    roughnessMap: shell.roughnessMap,
+    bumpMap: shell.bumpMap,
+    bumpScale: 0.8,
+  });
   const mesh = (geo, mat, x = 0, y = 0, z = 0) => {
     const m = new THREE.Mesh(geo, mat);
     m.position.set(x, y, z);
@@ -112,14 +145,18 @@ export function buildMech(kit) {
   };
 
   // ---------- torso: frame and layered armour around Orbit's round body (the chest core) ----------
-  part(pivot('frame', 0, 0, 0), [0.04, 0.26], { p: [0, 0, 0], s: 0.6 }); // core bezel, back spine, belly plate
+  part(pivot('frame', 0, 0, 0), STEPS.core, { p: [0, 0, 0], s: 0.6 }); // core bezel, back spine, belly plate
   for (const side of [-1, 1]) {
     const slab = mesh(panel(0.9, 1.3, 0.5, 0.24), shell, side * 0.05, 0.05, -0.1);
     slab.rotation.y = side * 0.72;
     const plate = pivot(side < 0 ? 'chestR' : 'chestL', side * 0.95, 0.15, -0.2, slab);
-    part(plate, [0.08, 0.32], { p: [side * 0.3, 0.2, -0.4], r: [0, side * 1.8, 0] });
+    part(plate, [STEPS.core[0] + 0.03, STEPS.core[1] + 0.03], { p: [side * 0.3, 0.2, -0.4], r: [0, side * 1.8, 0] });
   }
-  part(pivot('collar', 0, 1.02, -0.08, mesh(cyl(0.62, 0.78, 0.32), trim)), [0.1, 0.3], { p: [0, 0.5, -0.1] });
+  part(
+    pivot('collar', 0, 1.02, -0.08, mesh(cyl(0.62, 0.78, 0.32), trim)),
+    [STEPS.core[0] + 0.05, STEPS.core[1] + 0.03],
+    { p: [0, 0.5, -0.1] },
+  );
   // segmented abdomen
   [
     [-1.12, 1.2],
@@ -127,10 +164,10 @@ export function buildMech(kit) {
     [-1.66, 0.92],
   ].forEach(([y, w], i) => {
     const rib = pivot('rib' + i, 0, y, -0.05, mesh(panel(w, 0.24, 0.72, 0.1), trim));
-    part(rib, [0.12 + i * 0.04, 0.36 + i * 0.04], { p: [0, -0.9, -0.1], r: [1.4, 0, 0] });
+    part(rib, [STEPS.spine[0] + i * 0.03, STEPS.spine[1] - 0.04 + i * 0.03], { p: [0, -0.9, -0.1], r: [1.4, 0, 0] });
   });
   const pelvis = pivot('pelvis', 0, -2.02, -0.05, mesh(panel(1.75, 0.5, 0.9, 0.2), trim));
-  part(pelvis, [0.16, 0.42], { p: [0, -1.0, -0.1], r: [-1.2, 0, 0] });
+  part(pelvis, [STEPS.spine[0] + 0.04, STEPS.spine[1]], { p: [0, -1.0, -0.1], r: [-1.2, 0, 0] });
 
   // ---------- head: helmet, glass visor with glowing eyes, comms discs; rises out of the chest ----------
   const head = new THREE.Group();
@@ -198,7 +235,7 @@ export function buildMech(kit) {
   neckGlow.rotation.x = Math.PI / 2;
   head.add(gimbal, neckGlow);
   head.name = 'head';
-  part(head, [0.55, 0.8], { p: [0, 0.2, -0.1], s: 0.2 });
+  part(head, STEPS.head, { p: [0, 0.2, -0.1], s: 0.2 });
 
   // ---------- shoulders: armour + glowing turbine ----------
   const turbines = [];
@@ -227,7 +264,7 @@ export function buildMech(kit) {
     sh.add(pad, ring, fan, glowRing, flare);
     sh.userData.fan = fan; // the Blender model's own fan (<name>Fan) takes over when it loads
     turbines.push(sh);
-    part(sh, [0.42, 0.66], { p: [side * 0.9, 0.3, 0], s: 0.3, r: [0, 0, side * 1.6] });
+    part(sh, STEPS.shoulders, { p: [side * 0.9, 0.3, 0], s: 0.3, r: [0, 0, side * 1.6] });
   }
 
   // ---------- arms: swing down from the shoulders and extend; human hands ----------
@@ -264,7 +301,7 @@ export function buildMech(kit) {
     joints.push(lower, hand);
     arm.rotation.z = side * 0.08;
     arms.push(arm);
-    part(arm, [0.34, 0.62], { p: [side * 1.2, 0.6, 0], r: [0, 0, side * 2.6], s: 0.25 });
+    part(arm, STEPS.arms, { p: [side * 1.2, 0.6, 0], r: [0, 0, side * 2.6], s: 0.25 });
   }
   // retractable blade on the right forearm (modelled in Blender only); slides out of its rail last
   const sword = pivot('blade', -0.42, -0.17, 0);
@@ -306,7 +343,7 @@ export function buildMech(kit) {
     joints.push(lower);
     legs.push(leg);
     leg.scale.setScalar(LEG_SCALE); // deployed size (part() reads it); knees and feet scale with it
-    part(leg, [0.22, 0.52], { p: [side * 0.3, -1.4, -0.2], r: [-2.4, 0, 0], s: 0.3 });
+    part(leg, STEPS.legs, { p: [side * 0.3, -1.4, -0.2], r: [-2.4, 0, 0], s: 0.3 });
   }
 
   // ---------- backpack with twin thrusters ----------
@@ -327,7 +364,7 @@ export function buildMech(kit) {
     jets.push(jet);
     pack.add(nozzle, jet.flame);
   }
-  part(pack, [0.5, 0.74], { p: [0, 0, -0.4], r: [0.9, 0, 0] });
+  part(pack, STEPS.pack, { p: [0, 0, -0.4], r: [0.9, 0, 0] });
 
   // ---------- wings: fold out from the back, then the feathers fan open ----------
   const wings = [];
@@ -355,11 +392,12 @@ export function buildMech(kit) {
     // deployed: pointing up and out (the left wing is the right one turned around)
     wing.rotation.set(0, side === 1 ? 0 : Math.PI, 0.78);
     wings.push(wing);
-    part(wing, [0.62, 0.9], { p: [side * 0.3, 0.2, -0.9], r: [0, side === 1 ? 0 : Math.PI, -1.35], s: 0.35 });
+    part(wing, STEPS.wings, { p: [side * 0.3, 0.2, -0.9], r: [0, side === 1 ? 0 : Math.PI, -1.35], s: 0.35 });
   }
 
   // ---------- morph and life ----------
   /** 0 = folded away inside Orbit, 1 = AeroStrike. Each part follows its own time slot. */
+  let morphP = 1; // for the power pose at the end of the transformation
   function setMorph(p) {
     group.visible = p > 0.001;
     if (!group.visible) return;
@@ -372,9 +410,10 @@ export function buildMech(kit) {
       pt.obj.scale.setScalar(Math.max(0.001, lerp(pt.from.s, pt.to.s, Math.min(1, e))));
     }
     // feathers fan open last
-    const fan = easeOutBack(clamp01((p - 0.82) / 0.16));
+    morphP = p;
+    const fan = easeOutBack(clamp01((p - STEPS.feathers[0]) / (STEPS.feathers[1] - STEPS.feathers[0])));
     for (const w of wings) for (const f of w.userData.feathers) f.rotation.z = f.userData.open * fan;
-    const out = easeOutBack(clamp01((p - 0.86) / 0.12));
+    const out = easeOutBack(clamp01((p - STEPS.blade[0]) / (STEPS.blade[1] - STEPS.blade[0])));
     sword.visible = out > 0.01;
     sword.scale.set(1, Math.max(0.01, out), 1); // grows down from its root
   }
@@ -462,6 +501,20 @@ export function buildMech(kit) {
     defend(t, guard, def);
     follow(J, flinch);
     if (posture) hold(posture);
+    // the last step: a power pose as everything locks: arms thrown wide, chin up, one beat of the wings
+    const [p0, p1] = STEPS.pose;
+    if (morphP > p0 && morphP < 1) {
+      const k = clamp01((morphP - p0) / (p1 - p0));
+      const pose = Math.sin(Math.PI * k) ** 0.7; // in fast, out slow
+      arms.forEach((a, i) => {
+        const side = i === 0 ? -1 : 1;
+        a.rotation.z += side * 1.1 * pose;
+        a.rotation.x -= 0.4 * pose;
+        a.userData.fore.rotation.x -= 0.5 * pose;
+      });
+      head.rotation.x -= 0.3 * pose;
+      for (const w of wings) w.rotation.x += 0.45 * Math.sin(Math.PI * clamp01(k * 1.6)); // one beat
+    }
     // hands: relaxed and a little curled at rest (like ours), fists on guard, in a block, wrapping the
     // shins in a tuck and leading a superhero loop; open in the laser brace; a quick clench on a flinch
     const d = def ?? {};
@@ -644,5 +697,5 @@ export function buildMech(kit) {
     console.warn('AeroStrike model failed to load, using the built-in shapes', e);
   }
 
-  return { group, setMorph, update, jets };
+  return { group, setMorph, update, jets, STEPS };
 }

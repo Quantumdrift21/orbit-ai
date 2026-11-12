@@ -51,7 +51,7 @@
     <div id="btns"></div>
     <div>Light and dark desktop backgrounds. Move the mouse to make it look; click a robot to bounce.</div>
     <script type="module">
-      import { Robot, SKIN_NAMES } from './robot.js';
+      import { Robot, SKIN_NAMES, CHARACTER_NAMES } from './robot.js';
       const robots = [new Robot(document.getElementById('c1')), new Robot(document.getElementById('c2'))];
       let state = 'idle';
       robots.forEach((r) => {
@@ -94,6 +94,24 @@
         b.onclick = () => robots.forEach((r) => r.setSkin(skin));
         btns.appendChild(b);
       }
+
+      for (const ch of CHARACTER_NAMES) {
+        const b = document.createElement('button');
+        b.textContent = `character: ${ch}`;
+        b.onclick = () => robots.forEach((r) => r.setCharacter(ch));
+        btns.appendChild(b);
+      }
+      // Transform: in the app the brain drives form 0..1; here a slider does.
+      const form = document.createElement('input');
+      form.type = 'range';
+      form.min = 0;
+      form.max = 1;
+      form.step = 0.01;
+      form.value = 0;
+      form.title = 'form: 0 = small, 1 = transformed';
+      form.oninput = () => robots.forEach((r) => r.setMotion({ ...r.motion, vx: 0, vy: 0, form: Number(form.value) }));
+      btns.appendChild(form);
+      window.setRobotForm = (v) => ((form.value = v), form.oninput());
 
       // Stunts: in the app the brain sends the progress; here we play it locally (same timings).
       const SECS = { spin: 1.1, flip: 1.0, roll: 1.2, loop: 1.8 };

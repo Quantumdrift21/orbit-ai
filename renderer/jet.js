@@ -131,6 +131,7 @@ export function createJet({ radius = 0.2, length = 1.4, particles = 120, exhaust
 
   const origin = new THREE.Vector3();
   const dir = new THREE.Vector3();
+  const wscale = new THREE.Vector3();
   const q = new THREE.Quaternion();
 
   /**
@@ -157,7 +158,7 @@ export function createJet({ radius = 0.2, length = 1.4, particles = 120, exhaust
     // exhaust from the nozzle, along the flame's axis, in world space
     flame.getWorldPosition(origin);
     dir.set(0, -1, 0).applyQuaternion(flame.getWorldQuaternion(q)).normalize();
-    origin.addScaledVector(dir, length * 0.3 * flame.getWorldScale(new THREE.Vector3()).y);
+    origin.addScaledVector(dir, length * 0.3 * flame.getWorldScale(wscale).y);
     stepExhaust(ex, dt, {
       ...exhaust,
       throttle: on ? throttle : 0,
